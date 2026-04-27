@@ -6,6 +6,8 @@ const state = {
   status: null,
   presets: [],
   derivedTargets: [],
+  latestFinalJob: null,
+  lastAutoFinalImagePath: '',
   presetCompatibility: [],
   manifestCandidates: [],
   lastCrossTemplatePayload: null,
@@ -1801,6 +1803,7 @@ function renderPreflight() {
 async function refresh() {
   const payload = await api('/api/status');
   renderStatus(payload);
+  await refreshLatestFinalJob({ silent: true });
 }
 
 async function loadManifest() {
@@ -1872,6 +1875,68 @@ function syncFeishuArtifactFields(artifacts) {
     state.previewImagePathOverride = artifacts.previewImagePath || artifacts.finalImagePath;
     renderTemplatePreview();
   }
+}
+
+function formatBytes(value) {
+  const size = Number(value || 0);
+  if (!Number.isFinite(size) || size <= 0) return '-';
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function renderLatestFinalStatus(latest) {
+  const el = $('latestFinalStatus');
+  if (!el) return;
+  if (!latest?.found) {
+    el.innerHTML = `
+      <div class="target-dot warn"></div>
+      <span>暂无可回填的最终 PNG</span>
+      <small>${escapeHtml(latest?.reason || '完成高清导出后会自动回填')}</small>
+    `;
+    return;
+  }
+  const sessionId = latest.session?.sessionId || '-';
+  const finalSize = latest.files?.finalImage?.size;
+  const resultStatus = latest.jobState?.result?.status || 'final_exported';
+  el.innerHTML = `
+    <div class="target-dot ok"></div>
+    <span>已发现最近最终 PNG</span>
+    <small>${escapeHtml(sessionId)} · ${escapeHtml(resultStatus)} · ${escapeHtml(formatBytes(finalSize))}</small>
+  `;
+}
+
+async function refreshLatestFinalJob(options = {}) {
+  const payload = await api('/api/jobs/latest-final');
+  const latest = payload.latestFinalJob || { found: false };
+  state.latestFinalJob = latest;
+  renderLatestFinalStatus(latest);
+  if (!latest.found) return latest;
+  const artifacts = latest.artifacts || {};
+  const finalImagePath = String(artifacts.finalImagePath || '').trim();
+  const currentFinalPath = $('finalImagePath').value.trim();
+  const shouldFill = Boolean(finalImagePath) && (
+    options.force
+    || !currentFinalPath
+    || currentFinalPath === state.lastAutoFinalImagePath
+  );
+  if (shouldFill) {
+    syncFeishuArtifactFields(artifacts);
+    state.lastAutoFinalImagePath = finalImagePath;
+    if (!options.silent) {
+      setMessage('feishuResults', `
+        <div class="job-status ready">
+          <strong>已回填最近成品</strong>
+          <span>${escapeHtml(latest.session?.sessionId || '')}</span>
+        </div>
+        <div class="artifact-list">
+          <div><strong>finalImagePath</strong><span>${escapeHtml(finalImagePath)}</span></div>
+          <div><strong>editablePsdPath</strong><span>${escapeHtml(artifacts.editablePsdPath || 'PSD 仅本地保存')}</span></div>
+        </div>
+      `, 'html');
+    }
+  }
+  return latest;
 }
 
 function renderJobStatus(payload, label = 'Photoshop job') {
@@ -2189,6 +2254,15 @@ $('preflightFeishuBtn').addEventListener('click', async () => {
   try {
     setMessage('feishuResults', '正在进行发送前预检...');
     await preflightFeishu();
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
+$('backfillLatestFinalBtn').addEventListener('click', async () => {
+  try {
+    setMessage('feishuResults', '正在回填最近 Photoshop 最终成品...');
+    await refreshLatestFinalJob({ force: true });
   } catch (error) {
     setMessage('feishuResults', error.payload || error.message);
   }

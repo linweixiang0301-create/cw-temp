@@ -247,7 +247,9 @@
             <span>本地 PSD 保存路径（不发送）</span>
             <input id="finalFilePath" placeholder="/path/to/editable.psd" readonly>
           </label>
-          <div class="button-row stretch">
+          <div id="latestFinalStatus" class="target-status"></div>
+          <div class="button-row stretch feishu-actions">
+            <button id="backfillLatestFinalBtn" type="button" class="secondary">回填最近成品</button>
             <button id="preflightFeishuBtn" type="button" class="secondary">发送前预检</button>
             <button id="sendFeishuBtn" type="button" class="secondary">发送 PNG 成品</button>
           </div>

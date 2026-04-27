@@ -7,6 +7,7 @@ import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './fe
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
 import {
   confirmFinalExport,
+  getLatestFinalPhotoshopJob,
   createPhotoshopJob,
   getPhotoshopJob,
   getPhotoshopStatus,
@@ -766,6 +767,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
     if (req.method === 'POST' && url.pathname === '/api/jobs/preflight') {
       sendJson(res, 200, { ok: true, preflight: await preflightPhotoshopJob(await readJsonBody(req)) });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/jobs/latest-final') {
+      sendJson(res, 200, { ok: true, latestFinalJob: await getLatestFinalPhotoshopJob() });
       return true;
     }
 

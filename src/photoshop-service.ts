@@ -6,7 +6,7 @@ import {
   loadPhotoshopJobsBridge,
   loadPhotoshopSessionsBridge,
 } from './bridge.js';
-import { addJob } from './state.js';
+import { addJob, listJobs } from './state.js';
 import { preflightUiActions, type UiActionPreflight } from './ui-action-adapter.js';
 
 type CreateJobInput = {
@@ -121,6 +121,89 @@ export async function getPhotoshopJob(sessionId: string): Promise<Record<string,
     session,
     jobState: jobsBridge.readPhotoshopJobState(sessionId),
   };
+}
+
+function fileMeta(filePath: string | undefined): Record<string, unknown> | null {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) return null;
+  return {
+    path: filePath,
+    size: stat.size,
+    updatedAt: stat.mtimeMs,
+  };
+}
+
+export async function getLatestFinalPhotoshopJob(): Promise<Record<string, unknown>> {
+  const sessionsBridge = await loadPhotoshopSessionsBridge();
+  const jobsBridge = await loadPhotoshopJobsBridge();
+  for (const record of listJobs()) {
+    const jobState = jobsBridge.readPhotoshopJobState(record.sessionId);
+    const result = jobState?.result;
+    const artifacts = result?.artifacts || {};
+    const finalImage = fileMeta(artifacts.finalImagePath);
+    const editablePsd = fileMeta(artifacts.editablePsdPath);
+    if (result?.status !== 'final_exported' || !finalImage) continue;
+    const session = sessionsBridge.photoshopSessions.getById(record.sessionId) || {
+      sessionId: record.sessionId,
+      channelType: 'local-ui',
+      templateDisplayName: record.templateDisplayName,
+      originalPsdPath: record.originalPsdPath,
+      workingPsdPath: record.workingPsdPath,
+      status: record.status,
+      createdAt: Date.parse(record.createdAt) || 0,
+      updatedAt: result.updatedAt || Date.parse(record.createdAt) || 0,
+    };
+    return {
+      found: true,
+      source: 'console-job-history',
+      session,
+      jobState,
+      artifacts: {
+        finalImagePath: finalImage.path,
+        editablePsdPath: editablePsd?.path || artifacts.editablePsdPath || null,
+      },
+      files: {
+        finalImage,
+        editablePsd,
+      },
+    };
+  }
+
+  const sessions = typeof sessionsBridge.photoshopSessions.listSessions === 'function'
+    ? sessionsBridge.photoshopSessions.listSessions()
+    : [];
+  const candidates = sessions
+    .map((session: Record<string, unknown>) => {
+      const sessionId = String(session.sessionId || '').trim();
+      if (!sessionId) return null;
+      const jobState = jobsBridge.readPhotoshopJobState(sessionId);
+      const result = jobState?.result;
+      const artifacts = result?.artifacts || {};
+      const finalImage = fileMeta(artifacts.finalImagePath);
+      const editablePsd = fileMeta(artifacts.editablePsdPath);
+      if (result?.status !== 'final_exported' || !finalImage) return null;
+      return {
+        session,
+        jobState,
+        artifacts: {
+          finalImagePath: finalImage.path,
+          editablePsdPath: editablePsd?.path || artifacts.editablePsdPath || null,
+        },
+        files: {
+          finalImage,
+          editablePsd,
+        },
+        sortAt: Number(result.updatedAt || session.updatedAt || session.createdAt || 0),
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => b.sortAt - a.sortAt);
+
+  const latest = candidates[0] as Record<string, unknown> | undefined;
+  if (!latest) return { found: false, reason: '没有找到已完成高清导出的 Photoshop job。' };
+  const { sortAt: _sortAt, ...payload } = latest;
+  return { found: true, source: 'bridge-session-history', ...payload };
 }
 
 export async function confirmFinalExport(sessionId: string): Promise<Record<string, unknown>> {

@@ -1479,6 +1479,10 @@ select:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.button-row.stretch.feishu-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .compat-card {
   background: #f8fafc;
   border: 1px solid #e6ecf5;
@@ -1777,6 +1781,10 @@ pre {
   }
 
   .button-row.stretch.preset-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row.stretch.feishu-actions {
     grid-template-columns: 1fr;
   }
 
