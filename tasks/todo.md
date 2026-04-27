@@ -47,3 +47,4 @@
   - `git diff --check` 通过。
   - 本地服务 `/api/status` 与 `/api/feishu/targets` 正常返回。
   - 使用无效目标验证保存接口返回 400；未写入假目标，未发送飞书消息。
+  - 远端冷启动克隆到 `a59489fa9e15895a42449447d0ee4a86bc5d9d18`，`npm ci`、`npm run check`、备用端口 `/api/status` 和 `/api/feishu/targets` 均通过。
