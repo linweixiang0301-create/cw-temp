@@ -116,7 +116,7 @@
 - [x] 在最近成品状态中展示“可发送/等待目标”等明确提示。
 - [x] 真实发送到群聊“飞书codex 分身1️⃣”，只发送文本摘要和最终 PNG。
 - [x] 核验 `/api/feishu/send-history`、飞书群消息、UI 可见节点和脚本检查。
-- [ ] 远端冷启动回归并推送 GitHub。
+- [x] 远端冷启动回归并推送 GitHub。
 
 ## 回顾
 - 真实群聊目标已保存到本机运行时 state：`飞书codex 分身1️⃣` / `oc_6f5a98333a9b01fd35846e88c85a746d`。
@@ -126,3 +126,6 @@
 - `/api/feishu/send-history` 最新记录为 `sent`，包含目标、`final.png` 文件名/大小/投递方式、消息数量和 `PSD local_only`。
 - UI 已显示最近目标、发送历史、历史复用按钮、`载入最近并发送` 按钮；浏览器控制台无 error。
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
+- 已推送远端 main：`18ee54b3d7ac137ae42f0f7f14ba27c24fe94694`。
+- 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3598` 的 `/api/status` 和 `/api/feishu/send-history` 均正常。
+- 本地服务已恢复在 `http://127.0.0.1:3498`，当前运行态保留 1 个真实飞书目标和 1 条 `sent` 发送历史。
