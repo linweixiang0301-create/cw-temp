@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PS 自动化控制台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">PS</div>
+        <div>
+          <h1>PS 自动化控制台</h1>
+          <p>Slot 精准操作，本地预检，Photoshop 执行，飞书只负责最终输出。</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" type="button" class="secondary">刷新状态</button>
+        <button id="preflightTopBtn" type="button">运行预检</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="status-strip" id="statusStrip"></section>
+
+      <aside class="rail">
+        <h2>流程</h2>
+        <ol class="steps">
+          <li><span>1</span><div>来源<small>design006 / 本地 PSD</small></div></li>
+          <li><span>2</span><div>模板<small>真实 manifest</small></div></li>
+          <li class="active"><span>3</span><div>Slot 操作<small>点对点制导</small></div></li>
+          <li><span>4</span><div>预检<small>动作协议转换</small></div></li>
+          <li><span>5</span><div>执行<small>Photoshop queue</small></div></li>
+          <li><span>6</span><div>飞书<small>最终成品输出</small></div></li>
+        </ol>
+
+        <div class="rail-block">
+          <h3>模型路由</h3>
+          <div id="modelRoutes" class="model-routes"></div>
+        </div>
+      </aside>
+
+      <section class="main-panel">
+        <div class="layer-workbench">
+          <section class="template-preview-panel workbench-canvas">
+            <div class="section-head preview-head">
+            <div>
+              <h2>模板可视化预览</h2>
+              <p id="previewMeta">读取 manifest 后显示真实 PSD 坐标 overlay。</p>
+            </div>
+            <div class="preview-tools" aria-label="预览缩放">
+              <button id="zoomOutBtn" type="button" class="secondary small">-</button>
+              <button id="zoomFitBtn" type="button" class="secondary small">适配</button>
+              <button id="zoomInBtn" type="button" class="secondary small">+</button>
+            </div>
+          </div>
+          <div id="previewStatus" class="preview-status">尚未读取 manifest。</div>
+          <div id="previewViewport" class="preview-viewport">
+            <div id="templateCanvas" class="template-canvas">
+              <img id="previewImage" alt="模板预览图">
+              <div id="overlayLayer" class="overlay-layer"></div>
+            </div>
+          </div>
+          </section>
+
+          <section class="slot-browser-panel workbench-slots">
+            <div class="section-head slot-browser-head">
+              <div>
+                <h2>图层 Slot 浏览器</h2>
+                <p id="slotStats">尚未读取 manifest。</p>
+              </div>
+              <label class="field search">
+                <span>搜索</span>
+                <input id="slotSearch" placeholder="slot key / layerPath">
+              </label>
+            </div>
+            <div id="slotsBody" class="slot-list"></div>
+          </section>
+        </div>
+
+        <section id="sourcePanel" class="source-panel is-collapsed">
+          <div class="section-head compact source-head">
+            <div>
+              <h2>模板与来源</h2>
+              <p>路径均来自本机真实文件；不会创建假产物。</p>
+            </div>
+            <button id="toggleSourceBtn" type="button" class="secondary small" aria-expanded="false" aria-controls="sourceContent">展开来源</button>
+          </div>
+          <div id="sourceContent" class="source-content" hidden>
+            <div class="source-grid">
+              <label class="field wide">
+                <span>design006 详情页</span>
+                <input id="designUrl" value="https://www.design006.com/detail-99213334643">
+              </label>
+              <div class="button-row">
+                <button id="resolveBtn" type="button" class="secondary">解析 URL</button>
+                <button id="downloadBtn" type="button" class="secondary">下载到 PSD 收件箱</button>
+              </div>
+              <label class="field wide">
+                <span>Manifest 路径</span>
+                <input id="manifestPath">
+              </label>
+              <label class="field wide">
+                <span>PSD/PSB 路径</span>
+                <input id="psdPath">
+              </label>
+              <div class="button-row">
+                <button id="loadManifestBtn" type="button">读取真实 Manifest</button>
+                <button id="continueLoginBtn" type="button" class="secondary" disabled>已登录继续</button>
+                <button id="cancelLoginBtn" type="button" class="secondary" disabled>取消登录窗口</button>
+              </div>
+            </div>
+
+            <div id="designResults" class="message-box"></div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="inspector">
+        <section class="panel">
+          <div class="section-head compact">
+            <div>
+              <h2>Slot 详情与操作</h2>
+              <p>所有动作先入队，再由预检转换。</p>
+            </div>
+          </div>
+          <div id="slotDetail" class="slot-detail empty">读取 manifest 后选择一个 slot。</div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head compact">
+            <div>
+              <h2>动作队列</h2>
+              <p id="queueStats">0 个 UI action。</p>
+            </div>
+            <button id="clearQueueBtn" type="button" class="secondary small">清空</button>
+          </div>
+          <div id="queueList" class="queue-list"></div>
+          <div class="preset-panel">
+            <div class="preset-head">
+              <div>
+                <h3>操作预设</h3>
+                <p>保存当前 UI action；套用前会按当前 Manifest 预检。</p>
+              </div>
+            </div>
+            <label class="field">
+              <span>Preset 名称</span>
+              <input id="presetName" placeholder="例如：清空文案并微调位置">
+            </label>
+            <div class="button-row stretch preset-actions">
+              <button id="savePresetBtn" type="button" class="secondary">保存队列</button>
+              <button id="checkPresetCompatibilityBtn" type="button" class="secondary">检查兼容性</button>
+              <button id="applyPresetBtn" type="button" class="secondary">预检并套用</button>
+            </div>
+            <div class="preset-select-row">
+              <label class="field">
+                <span>已保存</span>
+                <select id="presetSelect"></select>
+              </label>
+              <button id="deletePresetBtn" type="button" class="secondary small">删除</button>
+            </div>
+            <div id="presetResults" class="preset-results"></div>
+            <div class="cross-template-panel">
+              <div class="preset-head">
+                <div>
+                  <h3>跨模板复用验证</h3>
+                  <p>导入第二个真实 manifest，查看缺失 slot 与候选映射。</p>
+                </div>
+              </div>
+              <div class="preset-select-row">
+                <label class="field">
+                  <span>本机候选</span>
+                  <select id="manifestCandidateSelect"></select>
+                </label>
+                <button id="discoverManifestsBtn" type="button" class="secondary small">发现</button>
+              </div>
+              <label class="field">
+                <span>第二 Manifest 路径</span>
+                <input id="crossManifestPath" placeholder="/path/to/other.psd.auto.json">
+              </label>
+              <div class="button-row stretch">
+                <button id="runCrossTemplateBtn" type="button" class="secondary">验证跨模板</button>
+              </div>
+              <div id="crossTemplateResults" class="preset-results"></div>
+              <label class="field">
+                <span>目标 Preset 名称</span>
+                <input id="derivedPresetName" placeholder="确认映射后生成目标模板专用 preset">
+              </label>
+              <div class="button-row stretch">
+                <button id="derivePresetBtn" type="button" class="secondary" disabled>确认映射并生成目标 Preset</button>
+              </div>
+              <div id="derivePresetResults" class="preset-results"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head compact">
+            <div>
+              <h2>预检与 Normalized Actions</h2>
+              <p>只提交可执行动作给 Photoshop。</p>
+            </div>
+            <button id="preflightBtn" type="button" class="secondary small">预检</button>
+          </div>
+          <div id="preflightResults" class="preflight-results"></div>
+          <div class="button-row stretch">
+            <button id="createJobBtn" type="button" disabled>创建预览任务</button>
+            <button id="confirmFinalBtn" type="button" class="secondary" disabled>确认高清导出</button>
+          </div>
+          <div id="jobResults" class="message-box dark result-log" data-label="执行回执"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head compact">
+            <div>
+              <h2>飞书输出</h2>
+              <p>只发送最终 PNG；PSD 保存在本地。</p>
+            </div>
+          </div>
+          <div id="feishuDefaultStatus" class="target-status"></div>
+          <div class="target-grid">
+            <label class="field">
+              <span>Chat ID</span>
+              <input id="feishuChatId" placeholder="oc_xxx；优先发送到群聊">
+            </label>
+            <label class="field">
+              <span>User ID</span>
+              <input id="feishuUserId" placeholder="ou_xxx；私聊输出">
+            </label>
+          </div>
+          <label class="field">
+            <span>最终图片路径</span>
+            <input id="finalImagePath" placeholder="/path/to/final.png">
+          </label>
+          <label class="field">
+            <span>本地 PSD 保存路径（不发送）</span>
+            <input id="finalFilePath" placeholder="/path/to/editable.psd" readonly>
+          </label>
+          <div class="button-row stretch">
+            <button id="preflightFeishuBtn" type="button" class="secondary">发送前预检</button>
+            <button id="sendFeishuBtn" type="button" class="secondary">发送 PNG 成品</button>
+          </div>
+          <div id="feishuResults" class="message-box dark result-log" data-label="发送回执"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js?v=derive-cross-template-preset" type="module"></script>
+  </body>
+</html>

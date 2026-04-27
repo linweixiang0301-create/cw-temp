@@ -1,0 +1,5 @@
+{
+  "manifestPath": "/absolute/path/to/template.psd.auto.json",
+  "psdPath": "/absolute/path/to/template.psd",
+  "compareManifestPath": "/absolute/path/to/another-template.psd.auto.json"
+}

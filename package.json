@@ -1,0 +1,17 @@
+{
+  "name": "ps-automation-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "check": "tsc --noEmit",
+    "smoke:resolve": "tsx src/smoke-resolve.ts"
+  },
+  "dependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}
