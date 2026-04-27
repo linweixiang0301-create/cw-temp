@@ -48,3 +48,28 @@
   - 本地服务 `/api/status` 与 `/api/feishu/targets` 正常返回。
   - 使用无效目标验证保存接口返回 400；未写入假目标，未发送飞书消息。
   - 远端冷启动克隆到 `a59489fa9e15895a42449447d0ee4a86bc5d9d18`，`npm ci`、`npm run check`、备用端口 `/api/status` 和 `/api/feishu/targets` 均通过。
+
+# 2026-04-28 任务 — 飞书发送就绪门禁
+
+## 目标
+- 在飞书输出区明确展示当前是否具备发送条件。
+- 缺少飞书目标或 `final.png` 路径时，禁用“发送 PNG 成品”，避免用户误触后才看到阻断。
+- 保持真实预检：文件是否存在、大小和投递方式仍由 `/api/feishu/preflight-final` 判定。
+
+## 计划
+- [x] 增加发送就绪状态条。
+- [x] 根据目标和最终图片路径控制发送按钮。
+- [x] 在目标/图片路径变化、回填、载入目标后实时刷新就绪状态。
+- [x] 运行类型检查、脚本检查和接口验证。
+
+## 回顾
+- 飞书输出区新增 `feishuReadinessStatus`，会展示“发送条件已具备/未齐”和缺失项。
+- “发送 PNG 成品”按钮现在由目标和 `final.png` 路径共同控制；缺少任一项会禁用。
+- 即使通过脚本绕过按钮，`sendFeishuFinal()` 也会先做本地 `ready_gate` 阻断，不进入发送 API。
+- 目标输入、清空目标、载入最近目标、回填最近成品、Photoshop job 状态更新都会刷新就绪状态。
+- 验证结果：
+  - `npm run check` 通过。
+  - `node --check public/app.js` 通过。
+  - `git diff --check` 通过。
+  - 本地服务可读取新增 `feishuReadinessStatus` 与 `app.js?v=feishu-readiness`。
+  - 当前有最近 `final.png`，但无飞书目标，发送预检仍以 `feishu_target_missing` 阻断；未发送飞书消息。

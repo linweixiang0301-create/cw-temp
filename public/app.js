@@ -127,6 +127,7 @@ function renderStatus(payload) {
   renderPresetList();
   renderDerivedTargets();
   renderFeishuTargets();
+  renderFeishuReadiness();
 }
 
 function renderFeishuDefaultStatus(feishu) {
@@ -1911,11 +1912,12 @@ function feishuTargetLabel(target) {
 function setFeishuBusy(busy, label = '发送中...') {
   const sendButton = $('sendFeishuBtn');
   if (sendButton) {
-    sendButton.disabled = busy;
     sendButton.textContent = busy ? label : '发送 PNG 成品';
+    sendButton.disabled = busy;
   }
   if ($('preflightFeishuBtn')) $('preflightFeishuBtn').disabled = busy;
   if ($('backfillLatestFinalBtn')) $('backfillLatestFinalBtn').disabled = busy;
+  if (!busy) renderFeishuReadiness();
 }
 
 function activeFeishuTarget() {
@@ -1925,6 +1927,69 @@ function activeFeishuTarget() {
   if (chatId) return { type: 'chat', value: chatId, label };
   if (userId) return { type: 'user', value: userId, label };
   return null;
+}
+
+function hasDefaultFeishuTarget() {
+  return Boolean(state.status?.feishu?.hasChatTarget || state.status?.feishu?.hasUserTarget);
+}
+
+function feishuReadiness() {
+  const finalImagePath = $('finalImagePath')?.value?.trim() || '';
+  const target = activeFeishuTarget();
+  const defaultTargetReady = hasDefaultFeishuTarget();
+  const targetReady = Boolean(target || defaultTargetReady);
+  const targetLabel = target
+    ? feishuTargetLabel({ ...target, source: 'body' })
+    : defaultTargetReady
+      ? '默认飞书目标'
+      : '未选择飞书目标';
+  return {
+    ready: Boolean(finalImagePath && targetReady),
+    finalImagePath,
+    finalReady: Boolean(finalImagePath),
+    targetReady,
+    targetLabel,
+  };
+}
+
+function renderFeishuReadiness() {
+  const el = $('feishuReadinessStatus');
+  if (!el) return feishuReadiness();
+  const readiness = feishuReadiness();
+  const missing = [
+    readiness.targetReady ? '' : '缺少飞书目标',
+    readiness.finalReady ? '' : '缺少 final.png 路径',
+  ].filter(Boolean);
+  el.innerHTML = `
+    <div class="target-dot ${readiness.ready ? 'ok' : 'warn'}"></div>
+    <span>${readiness.ready ? '发送条件已具备' : '发送条件未齐'}</span>
+    <small>${escapeHtml(readiness.ready ? `${readiness.targetLabel} · ${fileNameFromPath(readiness.finalImagePath)}` : missing.join('；'))}</small>
+  `;
+  const sendButton = $('sendFeishuBtn');
+  if (sendButton) {
+    sendButton.disabled = !readiness.ready;
+    sendButton.title = readiness.ready ? '发送当前 final.png 到飞书目标' : missing.join('；');
+  }
+  return readiness;
+}
+
+function renderFeishuReadinessBlock(readiness) {
+  const missing = [
+    readiness.targetReady ? '' : '缺少飞书目标',
+    readiness.finalReady ? '' : '缺少 final.png 路径',
+  ].filter(Boolean);
+  setMessage('feishuResults', `
+    <div class="job-status blocked">
+      <strong>发送条件未齐</strong>
+      <span>blocked</span>
+    </div>
+    <div class="issue err"><b>ready_gate</b>${escapeHtml(missing.join('；'))}</div>
+    <div class="artifact-list">
+      <div><strong>Target</strong><span>${escapeHtml(readiness.targetLabel)}</span></div>
+      <div><strong>final.png</strong><span>${escapeHtml(readiness.finalImagePath || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
 }
 
 function fillFeishuTarget(target) {
@@ -1947,6 +2012,7 @@ function fillFeishuTarget(target) {
       <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
     </div>
   `, 'html');
+  renderFeishuReadiness();
 }
 
 function targetLastUsedLabel(target) {
@@ -1984,6 +2050,7 @@ async function refreshFeishuTargets() {
   state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
   renderFeishuTargets();
   renderFeishuDefaultStatus(state.status?.feishu || {});
+  renderFeishuReadiness();
   return state.feishuTargets;
 }
 
@@ -1997,6 +2064,7 @@ async function saveCurrentFeishuTarget() {
   state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
   renderFeishuTargets();
   renderFeishuDefaultStatus(state.status?.feishu || {});
+  renderFeishuReadiness();
   setMessage('feishuResults', `
     <div class="job-status ready">
       <strong>已保存飞书目标</strong>
@@ -2017,6 +2085,7 @@ async function deleteFeishuTarget(id) {
   state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
   renderFeishuTargets();
   renderFeishuDefaultStatus(state.status?.feishu || {});
+  renderFeishuReadiness();
 }
 
 function renderLatestFinalStatus(latest) {
@@ -2057,6 +2126,7 @@ async function refreshLatestFinalJob(options = {}) {
   if (shouldFill) {
     syncFeishuArtifactFields(artifacts);
     state.lastAutoFinalImagePath = finalImagePath;
+    renderFeishuReadiness();
     if (!options.silent) {
       setMessage('feishuResults', `
         <div class="job-status ready">
@@ -2082,6 +2152,7 @@ function renderJobStatus(payload, label = 'Photoshop job') {
   const sessionId = session.sessionId || state.lastSessionId || '-';
   const error = result.error || jobState.error || payload.error || '';
   syncFeishuArtifactFields(artifacts);
+  renderFeishuReadiness();
   $('confirmFinalBtn').disabled = !(sessionId && status === 'preview_ready');
 
   const artifactList = artifactEntries(artifacts);
@@ -2228,6 +2299,11 @@ async function preflightFeishu() {
 }
 
 async function sendFeishuFinal() {
+  const readiness = renderFeishuReadiness();
+  if (!readiness.ready) {
+    renderFeishuReadinessBlock(readiness);
+    return;
+  }
   try {
     setFeishuBusy(true, '预检中...');
     renderFeishuProgress('发送前预检', 'checking');
@@ -2480,10 +2556,16 @@ $('confirmFinalBtn').addEventListener('click', async () => {
 
 $('feishuChatId').addEventListener('input', () => {
   if ($('feishuChatId').value.trim()) $('feishuUserId').value = '';
+  renderFeishuReadiness();
 });
 
 $('feishuUserId').addEventListener('input', () => {
   if ($('feishuUserId').value.trim()) $('feishuChatId').value = '';
+  renderFeishuReadiness();
+});
+
+$('finalImagePath').addEventListener('input', () => {
+  renderFeishuReadiness();
 });
 
 $('saveFeishuTargetBtn').addEventListener('click', async () => {
@@ -2498,6 +2580,7 @@ $('clearFeishuTargetBtn').addEventListener('click', () => {
   $('feishuChatId').value = '';
   $('feishuUserId').value = '';
   $('feishuTargetLabel').value = '';
+  renderFeishuReadiness();
   setMessage('feishuResults', '已清空当前飞书目标。');
 });
 
@@ -2562,6 +2645,7 @@ renderPreflight();
 renderPresetList();
 renderDerivedTargets();
 renderFeishuTargets();
+renderFeishuReadiness();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));
