@@ -8,6 +8,7 @@ const state = {
   presetCompatibility: [],
   manifestCandidates: [],
   lastCrossTemplatePayload: null,
+  lastDerivedPresetPayload: null,
   pendingId: null,
   lastSessionId: null,
   jobPollToken: 0,
@@ -1122,6 +1123,13 @@ function addActions(actions) {
   void runPreflight();
 }
 
+function resetActionQueue() {
+  state.uiActions = [];
+  state.preflight = null;
+  renderQueue();
+  renderPreflight();
+}
+
 function removeAction(id) {
   state.uiActions = state.uiActions.filter((action) => action.id !== id);
   state.preflight = null;
@@ -1340,6 +1348,7 @@ function collectConfirmedMappings() {
 }
 
 function renderDerivedPresetResult(payload) {
+  state.lastDerivedPresetPayload = payload || null;
   const tone = payload?.saved ? 'ready' : 'blocked';
   const preset = payload?.preset || {};
   const target = payload?.targetManifest || {};
@@ -1373,6 +1382,11 @@ function renderDerivedPresetResult(payload) {
         <strong>${escapeHtml(preset.name || '')}</strong>
         <span>${escapeHtml(target.templateId || '')} · ${escapeHtml(target.manifestPath || '')}</span>
       </div>
+      <div class="button-row stretch derived-target-actions">
+        <button type="button" class="secondary" data-derived-target-action="load">载入目标模板</button>
+        <button type="button" data-derived-target-action="load-apply">载入并套用 Preset</button>
+      </div>
+      <p class="hint">切换目标模板会清空当前动作队列，避免源模板动作混入目标模板。</p>
     ` : ''}
     ${applied ? `<div class="compat-card ready"><div class="compat-lines">${applied}</div></div>` : ''}
     ${compatibility}
@@ -1556,20 +1570,22 @@ async function saveCurrentPreset() {
   `, 'html');
 }
 
-async function applySelectedPreset() {
-  const preset = selectedPreset();
+async function applySelectedPreset(options = {}) {
+  const preset = options.preset || selectedPreset();
+  const resultId = options.resultId || 'presetResults';
+  const successTitle = options.successTitle || 'Preset 已套用';
   if (!preset) {
-    setMessage('presetResults', '<div class="issue err"><b>preset_missing</b>请选择一个已保存 preset。</div>', 'html');
+    setMessage(resultId, '<div class="issue err"><b>preset_missing</b>请选择一个已保存 preset。</div>', 'html');
     return;
   }
   if (!state.inspection) {
-    setMessage('presetResults', '<div class="issue err"><b>manifest_missing</b>请先读取真实 Manifest。</div>', 'html');
+    setMessage(resultId, '<div class="issue err"><b>manifest_missing</b>请先读取真实 Manifest。</div>', 'html');
     return;
   }
   const compatibilities = await refreshPresetCompatibility(preset.id);
   const compatibility = compatibilities[0] || presetCompatibility(preset.id);
   if (!compatibility || compatibility.status === 'blocked') {
-    setMessage('presetResults', `
+    setMessage(resultId, `
       <div class="preflight-status blocked">
         <strong>Preset 兼容性阻断</strong>
         <span>${escapeHtml(preset.name)}</span>
@@ -1578,14 +1594,52 @@ async function applySelectedPreset() {
     `, 'html');
     return;
   }
+  if (options.replaceQueue) resetActionQueue();
   const actions = Array.isArray(preset.uiActions) ? preset.uiActions.map(actionForPreset) : [];
   addActions(actions);
-  setMessage('presetResults', `
+  setMessage(resultId, `
     <div class="preflight-status ready">
-      <strong>Preset 已套用</strong>
+      <strong>${escapeHtml(successTitle)}</strong>
       <span>${escapeHtml(preset.name)} · ${compatibility.normalizedCount || 0} 个 normalized action</span>
     </div>
     ${renderPresetCompatibility(preset, compatibility)}
+  `, 'html');
+}
+
+async function loadDerivedTargetTemplate({ applyPreset = false } = {}) {
+  const payload = state.lastDerivedPresetPayload;
+  if (!payload?.saved || !payload?.targetManifest?.manifestPath) {
+    setMessage('derivePresetResults', '<div class="issue err"><b>derived_target_missing</b>请先生成已保存的目标模板 preset。</div>', 'html');
+    return;
+  }
+  const target = payload.targetManifest;
+  const presetId = payload.preset?.id || '';
+  $('manifestPath').value = target.manifestPath || '';
+  $('psdPath').value = target.psdPath || '';
+  resetActionQueue();
+  setMessage('derivePresetResults', '<div class="empty">正在载入目标模板真实 manifest...</div>', 'html');
+  await loadManifest();
+  await refreshPresets();
+  if (presetId && (state.presets || []).some((preset) => preset.id === presetId)) {
+    $('presetSelect').value = presetId;
+    renderPresetList();
+  }
+  if (applyPreset) {
+    const preset = (state.presets || []).find((item) => item.id === presetId) || payload.preset;
+    await applySelectedPreset({
+      preset,
+      replaceQueue: true,
+      resultId: 'derivePresetResults',
+      successTitle: '目标模板已载入并套用 Preset',
+    });
+    return;
+  }
+  setMessage('derivePresetResults', `
+    <div class="preflight-status ready">
+      <strong>目标模板已载入</strong>
+      <span>${escapeHtml(target.templateId || target.manifestPath)}</span>
+    </div>
+    ${renderDerivedPresetResult(payload)}
   `, 'html');
 }
 
@@ -1853,12 +1907,7 @@ $('zoomInBtn').addEventListener('click', () => {
 });
 $('zoomFitBtn').addEventListener('click', () => fitTemplatePreview());
 $('toggleSourceBtn').addEventListener('click', () => setSourceCollapsed(!state.sourceCollapsed));
-$('clearQueueBtn').addEventListener('click', () => {
-  state.uiActions = [];
-  state.preflight = null;
-  renderQueue();
-  renderPreflight();
-});
+$('clearQueueBtn').addEventListener('click', () => resetActionQueue());
 $('savePresetBtn').addEventListener('click', () => saveCurrentPreset().catch((error) => {
   setMessage('presetResults', error.payload || error.message);
 }));
@@ -1908,6 +1957,14 @@ $('runCrossTemplateBtn').addEventListener('click', () => runCrossTemplateValidat
 $('derivePresetBtn').addEventListener('click', () => deriveCrossTemplatePreset().catch((error) => {
   setMessage('derivePresetResults', error.payload || error.message);
 }));
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-derived-target-action]');
+  if (!button) return;
+  const action = button.dataset.derivedTargetAction || '';
+  loadDerivedTargetTemplate({ applyPreset: action === 'load-apply' }).catch((error) => {
+    setMessage('derivePresetResults', error.payload || error.message);
+  });
+});
 $('createJobBtn').addEventListener('click', () => createJob());
 
 $('resolveBtn').addEventListener('click', async () => {
