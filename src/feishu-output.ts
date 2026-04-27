@@ -141,12 +141,32 @@ export async function sendFinalToFeishu(input: SendFinalInput): Promise<Record<s
   const text = String(input.text || 'PS 自动化任务已完成。').trim();
   sent.push(await runLarkCli(['im', '+messages-send', ...target.args, '--text', text, '--as', 'bot']));
 
-  if (input.imagePath) {
-    if (!fs.existsSync(input.imagePath)) throw new Error(`imagePath 不存在：${input.imagePath}`);
-    const image = localFileForLarkCli(input.imagePath);
-    const size = fs.statSync(input.imagePath).size;
+  const imagePath = String(input.imagePath || '').trim();
+  let finalImage: Record<string, unknown> | null = null;
+  if (imagePath) {
+    if (!fs.existsSync(imagePath)) throw new Error(`imagePath 不存在：${imagePath}`);
+    const image = localFileForLarkCli(imagePath);
+    const size = fs.statSync(imagePath).size;
     const mediaFlag = size <= FEISHU_IMAGE_MESSAGE_MAX_BYTES ? '--image' : '--file';
     sent.push(await runLarkCli(['im', '+messages-send', ...target.args, mediaFlag, image.arg, '--as', 'bot'], { cwd: image.cwd }));
+    finalImage = {
+      path: imagePath,
+      fileName: path.basename(imagePath),
+      sizeBytes: size,
+      delivery: mediaFlag === '--image' ? 'image_message' : 'png_file',
+    };
   }
-  return { ok: true, preflight, sent };
+  return {
+    ok: true,
+    status: 'sent',
+    preflight,
+    receipt: {
+      sentAt: new Date().toISOString(),
+      target: { type: target.type, value: target.value, source: target.source },
+      finalImage,
+      messageCount: sent.length,
+      psdDelivery: 'local_only',
+    },
+    sent,
+  };
 }

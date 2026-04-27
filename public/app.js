@@ -1885,6 +1885,33 @@ function formatBytes(value) {
   return `${size} B`;
 }
 
+function fileNameFromPath(filePath) {
+  return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || '-';
+}
+
+function formatLocalDateTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleString('zh-CN');
+  return date.toLocaleString('zh-CN');
+}
+
+function feishuTargetLabel(target) {
+  if (!target) return '未选择';
+  const prefix = target.type === 'chat' ? '群聊' : '用户';
+  const source = target.source === 'env' ? '默认配置' : '手动填写';
+  return `${prefix}:${target.value} (${source})`;
+}
+
+function setFeishuBusy(busy, label = '发送中...') {
+  const sendButton = $('sendFeishuBtn');
+  if (sendButton) {
+    sendButton.disabled = busy;
+    sendButton.textContent = busy ? label : '发送 PNG 成品';
+  }
+  if ($('preflightFeishuBtn')) $('preflightFeishuBtn').disabled = busy;
+  if ($('backfillLatestFinalBtn')) $('backfillLatestFinalBtn').disabled = busy;
+}
+
 function renderLatestFinalStatus(latest) {
   const el = $('latestFinalStatus');
   if (!el) return;
@@ -1985,9 +2012,7 @@ function feishuPayload() {
 }
 
 function renderFeishuPreflight(preflight) {
-  const target = preflight.target
-    ? `${preflight.target.type}:${preflight.target.value} (${preflight.target.source})`
-    : '未选择';
+  const target = feishuTargetLabel(preflight.target);
   const artifacts = (preflight.artifacts || []).map((item) => `
     <div>
       <strong>${escapeHtml(item.key)}</strong>
@@ -2010,6 +2035,82 @@ function renderFeishuPreflight(preflight) {
   `, 'html');
 }
 
+function renderFeishuProgress(title, detail = '') {
+  setMessage('feishuResults', `
+    <div class="job-status running">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail || 'running')}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>final.png</strong><span>${escapeHtml($('finalImagePath').value.trim() || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
+}
+
+function renderFeishuSendReceipt(payload) {
+  const receipt = payload?.receipt || {};
+  const finalImage = receipt.finalImage || {};
+  const preflightArtifact = (payload?.preflight?.artifacts || []).find((item) => item.key === 'imagePath') || {};
+  const imagePath = finalImage.path || preflightArtifact.path || $('finalImagePath').value.trim();
+  const fileName = finalImage.fileName || fileNameFromPath(imagePath);
+  const sizeBytes = finalImage.sizeBytes ?? preflightArtifact.sizeBytes;
+  const delivery = finalImage.delivery || preflightArtifact.delivery || '-';
+  setMessage('feishuResults', `
+    <div class="job-status ready">
+      <strong>已发送 PNG 成品</strong>
+      <span>${escapeHtml(formatLocalDateTime(receipt.sentAt))}</span>
+    </div>
+    <dl class="job-meta">
+      <div><dt>Target</dt><dd>${escapeHtml(feishuTargetLabel(receipt.target || payload?.preflight?.target))}</dd></div>
+      <div><dt>File</dt><dd>${escapeHtml(fileName)}</dd></div>
+      <div><dt>Size</dt><dd>${escapeHtml(formatBytes(sizeBytes))}</dd></div>
+      <div><dt>Delivery</dt><dd>${escapeHtml(delivery)}</dd></div>
+      <div><dt>Messages</dt><dd>${escapeHtml(receipt.messageCount || '-')}</dd></div>
+    </dl>
+    <div class="artifact-list">
+      <div><strong>final.png</strong><span>${escapeHtml(imagePath || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
+}
+
+function renderFeishuSendError(error) {
+  const payload = error?.payload || {};
+  const details = payload.details;
+  const findings = Array.isArray(details?.findings)
+    ? details.findings.map((item) => `<div class="issue err"><b>${escapeHtml(item.code)}</b>${escapeHtml(item.message)}</div>`).join('')
+    : '';
+  setMessage('feishuResults', `
+    <div class="job-status blocked">
+      <strong>发送失败</strong>
+      <span>${escapeHtml(formatLocalDateTime())}</span>
+    </div>
+    <div class="issue err"><b>error</b>${escapeHtml(payload.error || error.message || '未知错误')}</div>
+    ${findings}
+    <div class="artifact-list">
+      <div><strong>final.png</strong><span>${escapeHtml($('finalImagePath').value.trim() || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+    <div class="button-row stretch retry-actions">
+      <button id="retryFeishuSendBtn" type="button">重试发送</button>
+      <button id="retryFeishuPreflightBtn" type="button" class="secondary">重新预检</button>
+    </div>
+  `, 'html');
+  $('retryFeishuSendBtn')?.addEventListener('click', () => void sendFeishuFinal());
+  $('retryFeishuPreflightBtn')?.addEventListener('click', async () => {
+    try {
+      setFeishuBusy(true, '预检中...');
+      renderFeishuProgress('发送前预检', 'checking');
+      await preflightFeishu();
+    } catch (retryError) {
+      renderFeishuSendError(retryError);
+    } finally {
+      setFeishuBusy(false);
+    }
+  });
+}
+
 async function preflightFeishu() {
   const payload = await api('/api/feishu/preflight-final', {
     method: 'POST',
@@ -2017,6 +2118,26 @@ async function preflightFeishu() {
   });
   renderFeishuPreflight(payload.preflight);
   return payload.preflight;
+}
+
+async function sendFeishuFinal() {
+  try {
+    setFeishuBusy(true, '预检中...');
+    renderFeishuProgress('发送前预检', 'checking');
+    const preflight = await preflightFeishu();
+    if (preflight.status !== 'ready') return;
+    setFeishuBusy(true, '发送中...');
+    renderFeishuProgress('正在发送 PNG 成品', feishuTargetLabel(preflight.target));
+    const payload = await api('/api/feishu/send-final', {
+      method: 'POST',
+      body: JSON.stringify(feishuPayload()),
+    });
+    renderFeishuSendReceipt(payload);
+  } catch (error) {
+    renderFeishuSendError(error);
+  } finally {
+    setFeishuBusy(false);
+  }
 }
 
 async function fetchJobStatus(sessionId) {
@@ -2269,23 +2390,7 @@ $('backfillLatestFinalBtn').addEventListener('click', async () => {
 });
 
 $('sendFeishuBtn').addEventListener('click', async () => {
-  try {
-    setMessage('feishuResults', '发送前预检中...');
-    const preflight = await preflightFeishu();
-    if (preflight.status !== 'ready') return;
-    setMessage('feishuResults', '发送中...');
-    const payload = await api('/api/feishu/send-final', {
-      method: 'POST',
-      body: JSON.stringify(feishuPayload()),
-    });
-    setMessage('feishuResults', payload);
-  } catch (error) {
-    if (error.payload?.details) {
-      renderFeishuPreflight(error.payload.details);
-    } else {
-      setMessage('feishuResults', error.payload || error.message);
-    }
-  }
+  await sendFeishuFinal();
 });
 
 applyInitialDefaults(await loadLocalDefaults());
