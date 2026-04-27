@@ -1920,6 +1920,7 @@ function setFeishuBusy(busy, label = '发送中...') {
   }
   if ($('preflightFeishuBtn')) $('preflightFeishuBtn').disabled = busy;
   if ($('backfillLatestFinalBtn')) $('backfillLatestFinalBtn').disabled = busy;
+  if ($('loadRecentAndSendBtn')) $('loadRecentAndSendBtn').disabled = busy;
   if (!busy) renderFeishuReadiness();
 }
 
@@ -2018,6 +2019,15 @@ function fillFeishuTarget(target) {
   renderFeishuReadiness();
 }
 
+function newestFeishuTarget() {
+  const targets = Array.isArray(state.feishuTargets) ? state.feishuTargets : [];
+  return [...targets].sort((a, b) => {
+    const aTime = Date.parse(a.lastUsedAt || a.updatedAt || a.createdAt || '') || 0;
+    const bTime = Date.parse(b.lastUsedAt || b.updatedAt || b.createdAt || '') || 0;
+    return bTime - aTime;
+  })[0] || null;
+}
+
 function targetLastUsedLabel(target) {
   if (target.lastUsedAt) return `上次发送 ${formatLocalDateTime(target.lastUsedAt)}`;
   if (target.updatedAt) return `更新 ${formatLocalDateTime(target.updatedAt)}`;
@@ -2051,7 +2061,7 @@ function renderFeishuTargets() {
 function sendHistoryTargetLabel(record) {
   const target = record?.target;
   if (!target?.value) return '未选择目标';
-  return `${target.type === 'chat' ? '群聊' : '用户'}:${target.value}${target.source ? ` (${target.source})` : ''}`;
+  return feishuTargetLabel(target);
 }
 
 function sendHistoryImageLabel(record) {
@@ -2061,6 +2071,36 @@ function sendHistoryImageLabel(record) {
     image.sizeBytes ? formatBytes(image.sizeBytes) : '',
     image.delivery || '',
   ].filter(Boolean).join(' · ') || '-';
+}
+
+function targetFromSendHistory(record) {
+  const target = record?.target || {};
+  if (!target.value || (target.type !== 'chat' && target.type !== 'user')) return null;
+  return {
+    type: target.type,
+    value: target.value,
+    label: `发送历史 · ${target.type === 'chat' ? '群聊' : '用户'}`,
+  };
+}
+
+function fillFeishuFromHistoryRecord(record, { includeImage = false } = {}) {
+  const target = targetFromSendHistory(record);
+  if (!target) throw new Error('这条发送历史没有可复用的飞书目标。');
+  fillFeishuTarget(target);
+  if (includeImage && record?.finalImage?.path) {
+    $('finalImagePath').value = record.finalImage.path;
+  }
+  renderFeishuReadiness();
+  setMessage('feishuResults', `
+    <div class="job-status ready">
+      <strong>${includeImage ? '已复用历史目标与文件' : '已复用历史目标'}</strong>
+      <span>${escapeHtml(feishuTargetLabel({ ...target, source: 'body' }))}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>final.png</strong><span>${escapeHtml(includeImage ? (record?.finalImage?.path || '-') : ($('finalImagePath').value.trim() || '-'))}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
 }
 
 function renderFeishuSendHistory() {
@@ -2075,12 +2115,19 @@ function renderFeishuSendHistory() {
     const findings = Array.isArray(record.findings) && record.findings.length
       ? ` · ${record.findings.map((item) => item.code || item.message || '').filter(Boolean).join('、')}`
       : '';
+    const canReuse = Boolean(targetFromSendHistory(record));
     return `
       <div class="send-history-card ${escapeHtml(record.status || 'failed')}">
         <strong>${escapeHtml(record.status === 'sent' ? '已发送' : '发送失败')} · ${escapeHtml(formatLocalDateTime(record.createdAt))}</strong>
         <span>${escapeHtml(sendHistoryTargetLabel(record))}</span>
         <small>${escapeHtml(sendHistoryImageLabel(record))}</small>
-        <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0}` : `${record.error || '未知错误'}${findings}`)}</small>
+        <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0} · PSD ${record.psdDelivery || 'local_only'}` : `${record.error || '未知错误'}${findings}`)}</small>
+        ${canReuse ? `
+          <div class="button-row stretch send-history-actions">
+            <button type="button" class="secondary small" data-feishu-history-action="reuse-target" data-id="${escapeHtml(record.id)}">复用目标</button>
+            <button type="button" class="secondary small" data-feishu-history-action="reuse-preflight" data-id="${escapeHtml(record.id)}">复用并预检</button>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -2150,10 +2197,12 @@ function renderLatestFinalStatus(latest) {
   const sessionId = latest.session?.sessionId || '-';
   const finalSize = latest.files?.finalImage?.size;
   const resultStatus = latest.jobState?.result?.status || 'final_exported';
+  const readiness = feishuReadiness();
+  const sendHint = readiness.targetReady ? '可回填并发送' : '等待飞书目标';
   el.innerHTML = `
     <div class="target-dot ok"></div>
     <span>已发现最近最终 PNG</span>
-    <small>${escapeHtml(sessionId)} · ${escapeHtml(resultStatus)} · ${escapeHtml(formatBytes(finalSize))}</small>
+    <small>${escapeHtml(sessionId)} · ${escapeHtml(resultStatus)} · ${escapeHtml(formatBytes(finalSize))} · ${escapeHtml(sendHint)}</small>
   `;
 }
 
@@ -2175,6 +2224,7 @@ async function refreshLatestFinalJob(options = {}) {
     syncFeishuArtifactFields(artifacts);
     state.lastAutoFinalImagePath = finalImagePath;
     renderFeishuReadiness();
+    renderLatestFinalStatus(latest);
     if (!options.silent) {
       setMessage('feishuResults', `
         <div class="job-status ready">
@@ -2365,9 +2415,39 @@ async function sendFeishuFinal() {
     });
     renderFeishuSendReceipt(payload);
     await refreshFeishuSendHistory().catch(() => {});
+    await refreshFeishuTargets().catch(() => {});
   } catch (error) {
     renderFeishuSendError(error);
     await refreshFeishuSendHistory().catch(() => {});
+  } finally {
+    setFeishuBusy(false);
+  }
+}
+
+async function loadRecentTargetAndLatestFinal({ send = false } = {}) {
+  try {
+    setFeishuBusy(true, send ? '准备发送...' : '准备中...');
+    let target = activeFeishuTarget();
+    if (!target) {
+      if (!state.feishuTargets.length) await refreshFeishuTargets();
+      target = newestFeishuTarget();
+      if (!target) throw new Error('没有可复用的飞书目标，请先保存一个真实 Chat ID 或 User ID。');
+      fillFeishuTarget(target);
+    }
+    renderFeishuProgress('正在回填最近目标与成品', target.label || target.value || 'recent target');
+    await refreshLatestFinalJob({ force: true, silent: true });
+    const readiness = renderFeishuReadiness();
+    if (!readiness.ready) {
+      renderFeishuReadinessBlock(readiness);
+      return;
+    }
+    if (send) {
+      await sendFeishuFinal();
+    } else {
+      await preflightFeishu();
+    }
+  } catch (error) {
+    renderFeishuSendError(error);
   } finally {
     setFeishuBusy(false);
   }
@@ -2672,6 +2752,20 @@ $('refreshSendHistoryBtn').addEventListener('click', async () => {
   }
 });
 
+$('feishuSendHistory').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-feishu-history-action]');
+  if (!button) return;
+  const record = state.feishuSendHistory.find((item) => item.id === button.dataset.id);
+  if (!record) return;
+  try {
+    const includeImage = button.dataset.feishuHistoryAction === 'reuse-preflight';
+    fillFeishuFromHistoryRecord(record, { includeImage });
+    if (includeImage) await preflightFeishu();
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
 $('preflightFeishuBtn').addEventListener('click', async () => {
   try {
     setMessage('feishuResults', '正在进行发送前预检...');
@@ -2688,6 +2782,10 @@ $('backfillLatestFinalBtn').addEventListener('click', async () => {
   } catch (error) {
     setMessage('feishuResults', error.payload || error.message);
   }
+});
+
+$('loadRecentAndSendBtn').addEventListener('click', async () => {
+  await loadRecentTargetAndLatestFinal({ send: true });
 });
 
 $('sendFeishuBtn').addEventListener('click', async () => {

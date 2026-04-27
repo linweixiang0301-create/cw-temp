@@ -101,3 +101,28 @@
   - `git diff --check` 通过。
   - 临时运行时验证缺少飞书目标的失败发送返回 400，并写入 1 条 failed 审计记录，`psdDelivery` 为 `local_only`；未发送飞书消息。
   - 本地服务 `http://127.0.0.1:3498` 已重启到最新代码，`/api/status` 和 `/api/feishu/send-history` 正常。
+
+# 2026-04-28 任务 — 飞书发送审计闭环与复用优化
+
+## 目标
+- 使用真实飞书群目标发送当前已回填的 `final.png`，验证发送历史中出现成功审计记录。
+- 保持硬边界：只发送最终 PNG 和文本摘要；PSD 只在本地路径展示，不进入发送 payload。
+- 补齐 UI 的下阶段操作闭环：一键载入最近目标和最近成品、从发送历史复用目标、在成品回填后提示可发送。
+
+## 计划
+- [x] 真实预检当前 `final.png` 与飞书群目标，确认文件存在、大小和投递方式。
+- [x] 在 UI 增加“一键准备发送”：载入最近保存目标、回填最近最终 PNG、执行发送前预检。
+- [x] 在发送历史卡片增加复用入口，可把历史目标带回当前发送表单。
+- [x] 在最近成品状态中展示“可发送/等待目标”等明确提示。
+- [x] 真实发送到群聊“飞书codex 分身1️⃣”，只发送文本摘要和最终 PNG。
+- [x] 核验 `/api/feishu/send-history`、飞书群消息、UI 可见节点和脚本检查。
+- [ ] 远端冷启动回归并推送 GitHub。
+
+## 回顾
+- 真实群聊目标已保存到本机运行时 state：`飞书codex 分身1️⃣` / `oc_6f5a98333a9b01fd35846e88c85a746d`。
+- 发送前预检通过：`final.png` 存在，大小 `1,852,542 bytes`，投递方式 `image_message`，无 findings。
+- 已真实发送文本摘要 + 最终 PNG；接口回执 `status=sent`、`messageCount=2`、`psdDelivery=local_only`。
+- 飞书群最新消息核验通过：`2026-04-28 02:16` 出现 1 条 text 和 1 条 image，未发送 PSD。
+- `/api/feishu/send-history` 最新记录为 `sent`，包含目标、`final.png` 文件名/大小/投递方式、消息数量和 `PSD local_only`。
+- UI 已显示最近目标、发送历史、历史复用按钮、`载入最近并发送` 按钮；浏览器控制台无 error。
+- `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。

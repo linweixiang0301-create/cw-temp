@@ -1527,7 +1527,7 @@ select:focus {
 }
 
 .button-row.stretch.feishu-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .send-history-head {
@@ -1589,6 +1589,10 @@ select:focus {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 10px;
+}
+
+.button-row.stretch.send-history-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .compat-card {
