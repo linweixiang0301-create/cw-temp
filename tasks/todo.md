@@ -145,7 +145,7 @@
 - [x] Job `final_exported` 后自动刷新飞书工作台，提示最近目标、最终 PNG 和可发送状态。
 - [x] 为跨模板映射建议支持复用历史 confirmed mapping，减少重复选择。
 - [x] 运行类型检查、脚本检查、真实接口验证和浏览器 UI 验证。
-- [ ] 远端冷启动回归并推送 GitHub。
+- [x] 远端冷启动回归并推送 GitHub。
 
 ## 回顾
 - `/api/feishu/preflight-final` 现在返回 `fileName`、`sizeBytes`、`modifiedAt`、`delivery` 和 `duplicateSend`。
@@ -155,3 +155,5 @@
 - 页面自动回填最近 `final.png`，浏览器验收显示 `final.png` 预览为 `1.8 MB · image_message`，session `photoshop-be946f18-7e54-497c-9548-483d2ea4c85b`，修改时间 `2026/4/28 00:41:33`。
 - 跨模板验证仍使用真实 preset / manifest；当前真实派生记录可为 `图2 -> 术前图` 的 image/transform 映射提供历史复用预选。
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
+- 已推送远端 main：`a609cf0b8651e936f66ee99435e85b157102397b`。
+- 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3599` 的 `/api/status` 与 `/api/feishu/send-history` 正常，新 UI/API 关键节点均可读取。
