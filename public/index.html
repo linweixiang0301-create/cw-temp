@@ -224,6 +224,28 @@
         <section class="panel">
           <div class="section-head compact">
             <div>
+              <h2>Artifact Center</h2>
+              <p>集中查看 job 产物、审计和安全复跑。</p>
+            </div>
+            <button id="loadLatestArtifactCenterBtn" type="button" class="secondary small">载入最近</button>
+          </div>
+          <div id="artifactCenterResults" class="artifact-center"></div>
+          <div class="button-row stretch artifact-actions">
+            <button id="artifactSafePreflightBtn" type="button" class="secondary">只预检</button>
+            <button id="artifactFeishuPreflightBtn" type="button" class="secondary">发送前预检</button>
+            <button id="artifactExportFinalBtn" type="button" class="secondary">重新生成 final.png</button>
+          </div>
+          <div class="button-row stretch artifact-actions secondary-row">
+            <button id="exportFeishuAuditBtn" type="button" class="secondary">导出审计 JSON</button>
+            <button id="runRegressionBtn" type="button" class="secondary">运行回归检查</button>
+          </div>
+          <div id="artifactRerunResults" class="message-box dark result-log" data-label="复跑/审计回执"></div>
+          <div id="regressionResults" class="regression-results"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head compact">
+            <div>
               <h2>飞书输出</h2>
               <p>只发送最终 PNG；PSD 保存在本地。</p>
             </div>
@@ -278,6 +300,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=feishu-next-phase" type="module"></script>
+    <script src="/app.js?v=artifact-center-phase" type="module"></script>
   </body>
 </html>

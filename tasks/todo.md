@@ -157,3 +157,28 @@
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
 - 已推送远端 main：`a609cf0b8651e936f66ee99435e85b157102397b`。
 - 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3599` 的 `/api/status` 与 `/api/feishu/send-history` 正常，新 UI/API 关键节点均可读取。
+
+# 2026-04-28 任务 — 生产化审计与复跑闭环
+
+## 目标
+- 把已跑通的 Photoshop -> final.png -> 飞书输出链路升级为可追溯、可复查、可安全复跑的控制台工作台。
+- 所有展示和验收必须来自真实本地 job、真实 runtime state、真实文件元数据和真实飞书发送历史，不使用 mock。
+- 继续保持外发边界：默认不重复发送，PSD 只展示本地路径，不进入飞书 payload。
+
+- [x] 增加 Job Artifact Center API：汇总 session/jobState、模板、preset/action 线索、final.png、editable.psd、本地文件元数据和关联飞书发送记录。
+- [x] 增加发送审计导出 API：可导出 JSON 审计包，包含发送目标、文件、大小、时间、message id、错误和 `psdDelivery=local_only`。
+- [x] 增加安全复跑 API：提供“只预检 / 重新生成 final.png / 发送前预检”三个明确动作，默认不触发飞书发送。
+- [x] 增加真实回归检查 API：检查服务状态、最近 final.png、图片预览、飞书目标、重复发送、发送历史和 PSD local-only 边界。
+- [x] 在 UI 中新增 Artifact Center、审计导出、安全复跑和回归检查面板。
+- [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证；验证时不执行 `forceResend`，不发送新飞书消息，不更新 lark-cli。
+- [ ] 远端冷启动回归并推送 GitHub。
+
+## 回顾
+- 新增 `/api/jobs/latest-artifact-center`、`/api/jobs/:sessionId/artifact-center`、`/api/jobs/:sessionId/safe-rerun`、`/api/feishu/send-history/export`、`/api/regression/feishu-output`。
+- Artifact Center 可从真实 console job history 找到 `photoshop-be946f18-7e54-497c-9548-483d2ea4c85b`，汇总 manifest、original PSD、working PSD、`final.png`、`editable.psd`、normalized actions、候选 preset 和关联发送历史。
+- 安全复跑验证只执行了 `preflight` 与 `feishu-preflight`：`feishu-preflight` 命中已有 sent 记录的 duplicate guard；`export-final` 缺少显式 `confirm=export-final` 时返回 HTTP `400`，未触发 Photoshop 复跑。
+- 审计导出返回 `count=2`、`sentCount=1`、`failedCount=1`，边界为 `finalPngDelivery=text_summary_plus_final_png`、`psdDelivery=local_only`。
+- 回归检查返回 `ready`，真实检查包括最近 final job、final.png 存在且可预览、本地最近飞书目标、duplicate guard、发送历史和 PSD local-only。
+- 浏览器验证通过：桌面 1440x1200 与移动 390x844 均显示 Artifact Center，安全预检与回归检查按钮可用，重新生成 final.png 对历史 session 为 disabled，控制台无 error，无横向溢出。
+- 验证后 `/api/feishu/send-history` 仍为 2 条：`failed` duplicate guard 审计 + 原始 `sent` 记录，没有新增飞书消息。
+- `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。

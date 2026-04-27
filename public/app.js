@@ -11,6 +11,8 @@ const state = {
   expandedSendHistoryId: '',
   lastFeishuPreflight: null,
   latestFinalJob: null,
+  artifactCenter: null,
+  regressionReport: null,
   lastAutoFinalImagePath: '',
   presetCompatibility: [],
   manifestCandidates: [],
@@ -133,6 +135,8 @@ function renderStatus(payload) {
   renderFeishuTargets();
   renderFeishuReadiness();
   renderFeishuSendHistory();
+  renderArtifactCenter();
+  renderRegressionReport();
 }
 
 function renderFeishuDefaultStatus(feishu) {
@@ -1930,6 +1934,18 @@ function formatFileMtime(value) {
   return formatLocalDateTime(value);
 }
 
+function downloadJsonFile(fileName, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function feishuTargetLabel(target) {
   if (!target) return '未选择';
   const prefix = target.type === 'chat' ? '群聊' : '用户';
@@ -2415,6 +2431,249 @@ function renderLatestFinalStatus(latest) {
   `;
 }
 
+function artifactCenterSessionId() {
+  return String(state.artifactCenter?.session?.sessionId || state.latestFinalJob?.session?.sessionId || state.lastSessionId || '').trim();
+}
+
+function renderArtifactFile(label, meta, fallbackPath = '') {
+  const pathValue = meta?.path || fallbackPath || '';
+  const exists = Boolean(meta?.path);
+  return `
+    <div class="artifact-file-row ${exists ? 'ready' : 'missing'}">
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(pathValue || '-')}</span>
+      <small>${escapeHtml(exists ? `${formatBytes(meta.size)} · ${formatFileMtime(meta.updatedAt)}` : '未找到本地文件')}</small>
+    </div>
+  `;
+}
+
+function renderArtifactCenter(center = state.artifactCenter) {
+  const el = $('artifactCenterResults');
+  if (!el) return;
+  const preflightBtn = $('artifactSafePreflightBtn');
+  const feishuPreflightBtn = $('artifactFeishuPreflightBtn');
+  const exportFinalBtn = $('artifactExportFinalBtn');
+  if (!center) {
+    el.innerHTML = '<div class="empty">载入最近 job 后，这里会显示产物、文件元数据和关联发送审计。</div>';
+    if (preflightBtn) preflightBtn.disabled = true;
+    if (feishuPreflightBtn) feishuPreflightBtn.disabled = true;
+    if (exportFinalBtn) exportFinalBtn.disabled = true;
+    return;
+  }
+  const session = center.session || {};
+  const template = center.template || {};
+  const artifacts = center.artifacts || {};
+  const files = center.files || {};
+  const audit = center.audit || {};
+  const capabilities = center.rerunCapabilities || {};
+  const relatedHistory = Array.isArray(center.relatedFeishuSendHistory) ? center.relatedFeishuSendHistory : [];
+  const presets = Array.isArray(center.candidatePresets) ? center.candidatePresets : [];
+  const finalPreview = files.finalImage?.path
+    ? `<img src="${escapeHtml(localImageUrl(files.finalImage.path))}" alt="final.png">`
+    : '<div class="artifact-preview-empty">final.png</div>';
+  const sentCount = relatedHistory.filter((record) => record.status === 'sent').length;
+  const failedCount = relatedHistory.filter((record) => record.status === 'failed').length;
+  if (preflightBtn) preflightBtn.disabled = !capabilities.preflight;
+  if (feishuPreflightBtn) feishuPreflightBtn.disabled = !capabilities.feishuPreflight;
+  if (exportFinalBtn) {
+    exportFinalBtn.disabled = !capabilities.exportFinal;
+    exportFinalBtn.title = capabilities.exportFinal ? '显式重新排队高清导出' : (capabilities.exportFinalReason || '当前 job 不能重新排队高清导出');
+  }
+  el.innerHTML = `
+    <div class="artifact-center-card">
+      <div class="artifact-preview">
+        ${finalPreview}
+      </div>
+      <div class="artifact-center-main">
+        <div class="job-status ${files.finalImage?.path ? 'ready' : 'blocked'}">
+          <strong>${escapeHtml(template.templateDisplayName || session.templateDisplayName || 'Photoshop job')}</strong>
+          <span>${escapeHtml(session.sessionId || '-')}</span>
+        </div>
+        <dl class="job-meta">
+          <div><dt>Source</dt><dd>${escapeHtml(center.sessionSource || '-')}</dd></div>
+          <div><dt>Template</dt><dd>${escapeHtml(template.templateId || '-')}</dd></div>
+          <div><dt>Actions</dt><dd>${escapeHtml(center.actions?.normalizedCount ?? 0)}</dd></div>
+          <div><dt>Send Audit</dt><dd>${escapeHtml(`${sentCount} sent / ${failedCount} failed`)}</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="artifact-file-list">
+      ${renderArtifactFile('Manifest', files.manifest, template.manifestPath)}
+      ${renderArtifactFile('Original PSD', files.originalPsd, template.originalPsdPath)}
+      ${renderArtifactFile('Working PSD', files.workingPsd, template.workingPsdPath)}
+      ${renderArtifactFile('final.png', files.finalImage, artifacts.finalImagePath)}
+      ${renderArtifactFile('editable.psd', files.editablePsd, artifacts.editablePsdPath)}
+    </div>
+    <div class="artifact-audit-strip">
+      <span>审计生成 ${escapeHtml(formatLocalDateTime(audit.generatedAt))}</span>
+      <span>发送记录 ${escapeHtml(audit.sendRecordCount ?? relatedHistory.length)}</span>
+      <span>PSD ${escapeHtml(audit.psdDelivery || 'local_only')}</span>
+    </div>
+    ${presets.length ? `
+      <div class="artifact-preset-list">
+        ${presets.map((preset) => `
+          <div><strong>${escapeHtml(preset.name)}</strong><span>${escapeHtml(`${preset.actionCount || 0} actions · ${(preset.slotKeys || []).join('、') || '-'}`)}</span></div>
+        `).join('')}
+      </div>
+    ` : '<div class="muted">没有找到同模板 preset 线索。</div>'}
+  `;
+}
+
+function renderSafeRerunResult(payload) {
+  const preflight = payload?.preflight || {};
+  const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+  setMessage('artifactRerunResults', `
+    <div class="job-status ${preflight.status === 'blocked' ? 'blocked' : 'ready'}">
+      <strong>安全复跑预检</strong>
+      <span>${escapeHtml(preflight.status || payload?.action || '-')}</span>
+    </div>
+    <div class="artifact-list">
+      ${checks.map((check) => `
+        <div><strong>${escapeHtml(check.code)}</strong><span>${escapeHtml(`${check.status} · ${check.message}`)}</span></div>
+      `).join('')}
+    </div>
+  `, 'html');
+}
+
+function renderArtifactFeishuPreflight(payload) {
+  state.lastFeishuPreflight = payload?.preflight || null;
+  renderFeishuPreflight(payload.preflight);
+  renderFeishuReadiness();
+  setMessage('artifactRerunResults', `
+    <div class="job-status ${payload.preflight?.status === 'ready' ? 'ready' : 'blocked'}">
+      <strong>Artifact Center 发送前预检</strong>
+      <span>${escapeHtml(payload.preflight?.status || '-')}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>Target</strong><span>${escapeHtml(feishuTargetLabel(payload.preflight?.target))}</span></div>
+      <div><strong>final.png</strong><span>${escapeHtml(payload.preflight?.artifacts?.find?.((item) => item.key === 'imagePath')?.path || state.artifactCenter?.artifacts?.finalImagePath || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
+}
+
+function renderRegressionReport(report = state.regressionReport) {
+  const el = $('regressionResults');
+  if (!el) return;
+  if (!report) {
+    el.innerHTML = '<div class="empty">运行回归检查后显示真实状态。</div>';
+    return;
+  }
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  el.innerHTML = `
+    <div class="regression-head ${escapeHtml(report.status || 'blocked')}">
+      <strong>真实回归检查 · ${escapeHtml(report.status || '-')}</strong>
+      <span>${escapeHtml(formatLocalDateTime(report.generatedAt))}</span>
+    </div>
+    <div class="regression-checks">
+      ${checks.map((check) => `
+        <div class="regression-check ${escapeHtml(check.status || 'warning')}">
+          <strong>${escapeHtml(check.code)}</strong>
+          <span>${escapeHtml(check.message || '-')}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function loadLatestArtifactCenter(options = {}) {
+  const payload = await api('/api/jobs/latest-artifact-center');
+  state.artifactCenter = payload.artifactCenter || null;
+  if (payload.latestFinalJob) {
+    state.latestFinalJob = payload.latestFinalJob;
+    renderLatestFinalStatus(state.latestFinalJob);
+  }
+  renderArtifactCenter();
+  if (!options.silent) {
+    setMessage('artifactRerunResults', state.artifactCenter ? '已载入最近 Job Artifact Center。' : '没有可载入的最近 final.png job。');
+  }
+  return state.artifactCenter;
+}
+
+async function loadArtifactCenterBySession(sessionId, options = {}) {
+  const payload = await api(`/api/jobs/${encodeURIComponent(sessionId)}/artifact-center`);
+  state.artifactCenter = payload.artifactCenter || null;
+  renderArtifactCenter();
+  if (!options.silent) setMessage('artifactRerunResults', '已载入指定 job artifact center。');
+  return state.artifactCenter;
+}
+
+async function runArtifactSafePreflight() {
+  const sessionId = artifactCenterSessionId();
+  if (!sessionId) throw new Error('请先载入一个 Photoshop job。');
+  const payload = await api(`/api/jobs/${encodeURIComponent(sessionId)}/safe-rerun`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'preflight' }),
+  });
+  renderSafeRerunResult(payload);
+  return payload;
+}
+
+async function runArtifactFeishuPreflight() {
+  const sessionId = artifactCenterSessionId();
+  if (!sessionId) throw new Error('请先载入一个 Photoshop job。');
+  const target = activeFeishuTarget();
+  const payload = await api(`/api/jobs/${encodeURIComponent(sessionId)}/safe-rerun`, {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'feishu-preflight',
+      chatId: target?.type === 'chat' ? target.value : '',
+      userId: target?.type === 'user' ? target.value : '',
+    }),
+  });
+  renderArtifactFeishuPreflight(payload);
+  return payload;
+}
+
+async function queueArtifactFinalExport() {
+  const sessionId = artifactCenterSessionId();
+  if (!sessionId) throw new Error('请先载入一个 Photoshop job。');
+  const confirmed = window.confirm('确认重新排队生成 final.png？这会触发本地 Photoshop job，但不会发送飞书消息。');
+  if (!confirmed) return null;
+  const payload = await api(`/api/jobs/${encodeURIComponent(sessionId)}/safe-rerun`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'export-final', confirm: 'export-final' }),
+  });
+  renderJobStatus(payload, '已重新排队高清导出');
+  setMessage('artifactRerunResults', `
+    <div class="job-status running">
+      <strong>已触发重新生成 final.png</strong>
+      <span>${escapeHtml(sessionId)}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>飞书发送</strong><span>未发送，仅重新排队 Photoshop 导出</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
+  await pollJobStatus(sessionId, ['final_exported'], 'Photoshop 高清导出复跑');
+  await loadArtifactCenterBySession(sessionId, { silent: true }).catch(() => {});
+  return payload;
+}
+
+async function exportFeishuAudit() {
+  const payload = await api('/api/feishu/send-history/export');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  downloadJsonFile(`feishu-send-audit-${stamp}.json`, payload.audit || payload);
+  setMessage('artifactRerunResults', `
+    <div class="job-status ready">
+      <strong>已生成审计 JSON</strong>
+      <span>${escapeHtml(payload.audit?.count ?? 0)} records</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>PSD</strong><span>${escapeHtml(payload.audit?.boundary?.psdDelivery || 'local_only')}</span></div>
+      <div><strong>范围</strong><span>${escapeHtml(payload.audit?.scope || 'feishu-send-history')}</span></div>
+    </div>
+  `, 'html');
+  return payload;
+}
+
+async function runRegressionCheck() {
+  const payload = await api('/api/regression/feishu-output');
+  state.regressionReport = payload.regression || null;
+  renderRegressionReport();
+  return state.regressionReport;
+}
+
 async function refreshLatestFinalJob(options = {}) {
   const payload = await api('/api/jobs/latest-final');
   const latest = payload.latestFinalJob || { found: false };
@@ -2684,6 +2943,7 @@ async function pollJobStatus(sessionId, targetStatuses, label) {
     if (targets.has(status) || status === 'failed' || status === 'error') {
       if (status === 'final_exported') {
         await refreshLatestFinalJob({ force: true, silent: true }).catch(() => {});
+        await loadArtifactCenterBySession(sessionId, { silent: true }).catch(() => {});
         await refreshFeishuTargets().catch(() => {});
         renderFeishuReadiness();
       }
@@ -2827,6 +3087,48 @@ document.addEventListener('click', (event) => {
   });
 });
 $('createJobBtn').addEventListener('click', () => createJob());
+$('loadLatestArtifactCenterBtn').addEventListener('click', async () => {
+  try {
+    await loadLatestArtifactCenter();
+  } catch (error) {
+    setMessage('artifactRerunResults', error.payload || error.message);
+  }
+});
+$('artifactSafePreflightBtn').addEventListener('click', async () => {
+  try {
+    await runArtifactSafePreflight();
+  } catch (error) {
+    setMessage('artifactRerunResults', error.payload || error.message);
+  }
+});
+$('artifactFeishuPreflightBtn').addEventListener('click', async () => {
+  try {
+    await runArtifactFeishuPreflight();
+  } catch (error) {
+    setMessage('artifactRerunResults', error.payload || error.message);
+  }
+});
+$('artifactExportFinalBtn').addEventListener('click', async () => {
+  try {
+    await queueArtifactFinalExport();
+  } catch (error) {
+    setMessage('artifactRerunResults', error.payload || error.message);
+  }
+});
+$('exportFeishuAuditBtn').addEventListener('click', async () => {
+  try {
+    await exportFeishuAudit();
+  } catch (error) {
+    setMessage('artifactRerunResults', error.payload || error.message);
+  }
+});
+$('runRegressionBtn').addEventListener('click', async () => {
+  try {
+    await runRegressionCheck();
+  } catch (error) {
+    setMessage('regressionResults', `<div class="issue err"><b>regression_error</b>${escapeHtml(error.message || error.payload?.error || '检查失败')}</div>`, 'html');
+  }
+});
 
 $('resolveBtn').addEventListener('click', async () => {
   try {
@@ -3042,10 +3344,13 @@ renderDerivedTargets();
 renderFeishuTargets();
 renderFeishuReadiness();
 renderFeishuSendHistory();
+renderArtifactCenter();
+renderRegressionReport();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));
 await refreshLatestFinalJob({ silent: true }).catch(() => {});
+await loadLatestArtifactCenter({ silent: true }).catch(() => {});
 if ($('manifestPath').value.trim()) {
   await loadManifest().catch((error) => setMessage('designResults', error.message));
 } else {

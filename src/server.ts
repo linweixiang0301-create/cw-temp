@@ -7,6 +7,7 @@ import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './fe
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
 import {
   confirmFinalExport,
+  getPhotoshopJobArtifactCenter,
   getLatestFinalPhotoshopJob,
   createPhotoshopJob,
   getPhotoshopJob,
@@ -362,6 +363,217 @@ function duplicateSendError(preflight: Record<string, unknown>): Error {
   return error;
 }
 
+function fileExists(filePath: unknown): boolean {
+  const resolved = String(filePath || '').trim();
+  return Boolean(resolved && fs.existsSync(resolved) && fs.statSync(resolved).isFile());
+}
+
+function newestFeishuTargetRecord(): ReturnType<typeof listFeishuTargets>[number] | null {
+  return [...listFeishuTargets()].sort((a, b) => {
+    const aTime = Date.parse(a.lastUsedAt || a.updatedAt || a.createdAt || '') || 0;
+    const bTime = Date.parse(b.lastUsedAt || b.updatedAt || b.createdAt || '') || 0;
+    return bTime - aTime;
+  })[0] || null;
+}
+
+function relatedFeishuHistoryForImage(imagePath: unknown): ReturnType<typeof listFeishuSendHistory> {
+  const normalized = normalizeMaybePath(imagePath);
+  if (!normalized) return [];
+  return listFeishuSendHistory().filter((record) => normalizeMaybePath(record.finalImage?.path) === normalized);
+}
+
+function candidatePresetsForJob(center: Record<string, any>): ActionPresetRecord[] {
+  const template = center.template || {};
+  const templateId = String(template.templateId || '').trim();
+  const displayName = String(template.templateDisplayName || '').trim();
+  return listPresets().filter((preset) => (
+    (templateId && preset.templateId === templateId)
+    || (displayName && preset.templateDisplayName === displayName)
+  )).slice(0, 8);
+}
+
+async function artifactCenterPayload(sessionId: string): Promise<Record<string, unknown>> {
+  const center = await getPhotoshopJobArtifactCenter(sessionId) as Record<string, any>;
+  const finalImagePath = center.artifacts?.finalImagePath || null;
+  const relatedFeishuSendHistory = relatedFeishuHistoryForImage(finalImagePath);
+  return {
+    ok: true,
+    artifactCenter: {
+      ...center,
+      candidatePresets: candidatePresetsForJob(center).map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        templateId: preset.templateId || null,
+        templateDisplayName: preset.templateDisplayName || null,
+        actionCount: preset.actionCount,
+        slotKeys: preset.slotKeys,
+      })),
+      relatedFeishuSendHistory,
+      audit: {
+        generatedAt: new Date().toISOString(),
+        finalImagePath,
+        sendRecordCount: relatedFeishuSendHistory.length,
+        sentCount: relatedFeishuSendHistory.filter((record) => record.status === 'sent').length,
+        failedCount: relatedFeishuSendHistory.filter((record) => record.status === 'failed').length,
+        psdDelivery: 'local_only',
+      },
+    },
+  };
+}
+
+function buildSafeRerunPreflight(center: Record<string, any>): Record<string, unknown> {
+  const template = center.template || {};
+  const artifacts = center.artifacts || {};
+  const capabilities = center.rerunCapabilities || {};
+  const checks = [
+    {
+      code: 'manifest_available',
+      status: fileExists(template.manifestPath) ? 'ready' : 'blocked',
+      message: template.manifestPath || '缺少 manifest 路径。',
+    },
+    {
+      code: 'original_psd_available',
+      status: fileExists(template.originalPsdPath) ? 'ready' : 'blocked',
+      message: template.originalPsdPath || '缺少原始 PSD 路径。',
+    },
+    {
+      code: 'final_png_available',
+      status: fileExists(artifacts.finalImagePath) ? 'ready' : 'warning',
+      message: artifacts.finalImagePath || '当前 job 还没有 final.png。',
+    },
+    {
+      code: 'export_final_available',
+      status: capabilities.exportFinal ? 'ready' : 'warning',
+      message: capabilities.exportFinal ? '当前 session 可重新排队高清导出。' : (capabilities.exportFinalReason || '当前 session 不支持直接复跑高清导出。'),
+    },
+    {
+      code: 'psd_delivery',
+      status: 'ready',
+      message: 'editable.psd 仅本地保存，不进入飞书发送 payload。',
+    },
+  ];
+  return {
+    status: checks.some((check) => check.status === 'blocked') ? 'blocked' : 'ready',
+    checks,
+  };
+}
+
+async function safeRerunPayload(sessionId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const action = String(body.action || '').trim();
+  if (!['preflight', 'export-final', 'feishu-preflight'].includes(action)) {
+    throw badRequest('安全复跑 action 必须是 preflight、export-final 或 feishu-preflight。');
+  }
+  const center = await getPhotoshopJobArtifactCenter(sessionId) as Record<string, any>;
+  if (action === 'preflight') {
+    return { ok: true, action, preflight: buildSafeRerunPreflight(center), artifactCenter: center };
+  }
+  if (action === 'feishu-preflight') {
+    const imagePath = String(center.artifacts?.finalImagePath || '').trim();
+    if (!imagePath) throw badRequest('当前 job 没有 final.png，无法进行飞书发送前预检。');
+    const preflight = addDuplicateSendInfo(await preflightFinalToFeishu({
+      chatId: String(body.chatId || '').trim(),
+      userId: String(body.userId || '').trim(),
+      imagePath,
+    }));
+    return { ok: true, action, preflight, artifactCenter: center };
+  }
+  if (body.confirm !== 'export-final') {
+    throw badRequest('重新生成 final.png 需要显式提交 confirm=export-final。');
+  }
+  return { ok: true, action, ...(await confirmFinalExport(sessionId)) };
+}
+
+function feishuAuditExportPayload(): Record<string, unknown> {
+  const records = listFeishuSendHistory();
+  return {
+    ok: true,
+    audit: {
+      generatedAt: new Date().toISOString(),
+      scope: 'feishu-send-history',
+      count: records.length,
+      sentCount: records.filter((record) => record.status === 'sent').length,
+      failedCount: records.filter((record) => record.status === 'failed').length,
+      boundary: {
+        finalPngDelivery: 'text_summary_plus_final_png',
+        psdDelivery: 'local_only',
+      },
+      records,
+    },
+  };
+}
+
+async function feishuOutputRegressionPayload(): Promise<Record<string, unknown>> {
+  const latestFinalJob = await getLatestFinalPhotoshopJob() as Record<string, any>;
+  const finalImagePath = latestFinalJob?.artifacts?.finalImagePath || null;
+  const editablePsdPath = latestFinalJob?.artifacts?.editablePsdPath || null;
+  const targets = listFeishuTargets();
+  const newestTarget = newestFeishuTargetRecord();
+  const history = listFeishuSendHistory();
+  const preflight = finalImagePath && newestTarget
+    ? addDuplicateSendInfo(await preflightFinalToFeishu({
+      chatId: newestTarget.type === 'chat' ? newestTarget.value : '',
+      userId: newestTarget.type === 'user' ? newestTarget.value : '',
+      imagePath: finalImagePath,
+    }))
+    : null;
+  const duplicateSend = preflight ? (preflight as Record<string, unknown>).duplicateSend || null : null;
+  const checks = [
+    {
+      code: 'latest_final_job',
+      status: latestFinalJob?.found ? 'ready' : 'blocked',
+      message: latestFinalJob?.found ? String(latestFinalJob.session?.sessionId || '-') : String(latestFinalJob?.reason || '没有最近 final.png。'),
+    },
+    {
+      code: 'final_png_exists',
+      status: fileExists(finalImagePath) ? 'ready' : 'blocked',
+      message: finalImagePath || '缺少 final.png 路径。',
+    },
+    {
+      code: 'final_png_previewable',
+      status: finalImagePath && isSupportedLocalImage(finalImagePath) && fileExists(finalImagePath) ? 'ready' : 'blocked',
+      message: finalImagePath || '缺少可预览图片。',
+    },
+    {
+      code: 'feishu_target_available',
+      status: targets.length > 0 ? 'ready' : 'warning',
+      message: newestTarget ? `${newestTarget.type}:${newestTarget.value}` : '没有本地保存目标；仍可手动填写。',
+    },
+    {
+      code: 'duplicate_guard',
+      status: duplicateSend ? 'ready' : 'ready',
+      message: duplicateSend ? '已命中重复发送记录，默认会阻断再次投递。' : '未命中重复发送记录。',
+    },
+    {
+      code: 'send_history_present',
+      status: history.length > 0 ? 'ready' : 'warning',
+      message: `${history.length} 条发送审计记录。`,
+    },
+    {
+      code: 'psd_local_only',
+      status: 'ready',
+      message: editablePsdPath ? `PSD 仅本地保存：${editablePsdPath}` : '没有 editable PSD 路径，但发送 payload 仍只使用 final.png。',
+    },
+  ];
+  return {
+    ok: true,
+    regression: {
+      generatedAt: new Date().toISOString(),
+      status: checks.some((check) => check.status === 'blocked') ? 'blocked' : 'ready',
+      checks,
+      latestFinalJob,
+      newestTarget,
+      sendHistoryCount: history.length,
+      latestSendRecord: history[0] || null,
+      preflight,
+      safety: {
+        noMockData: true,
+        psdDelivery: 'local_only',
+        sendApiDefault: 'duplicate_guarded',
+      },
+    },
+  };
+}
+
 function mappingKey(slotKey: string, capability: SlotCapability): string {
   return `${capability}:${slotKey}`;
 }
@@ -622,6 +834,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
     if (req.method === 'GET' && url.pathname === '/api/feishu/send-history') {
       sendJson(res, 200, { ok: true, history: listFeishuSendHistory() });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/feishu/send-history/export') {
+      sendJson(res, 200, feishuAuditExportPayload());
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/regression/feishu-output') {
+      sendJson(res, 200, await feishuOutputRegressionPayload());
       return true;
     }
 
@@ -967,6 +1189,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/jobs/latest-artifact-center') {
+      const latest = await getLatestFinalPhotoshopJob() as Record<string, any>;
+      const sessionId = String(latest?.session?.sessionId || '').trim();
+      if (!latest?.found || !sessionId) {
+        sendJson(res, 200, { ok: true, artifactCenter: null, latestFinalJob: latest });
+        return true;
+      }
+      sendJson(res, 200, {
+        ...(await artifactCenterPayload(sessionId)),
+        latestFinalJob: latest,
+      });
+      return true;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/manifest/inspect') {
       const body = await readJsonBody<{ manifestPath?: string; psdPath?: string }>(req);
       const manifestPath = String(body.manifestPath || '').trim();
@@ -982,6 +1218,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
     if (jobMatch && req.method === 'POST' && jobMatch[2] === 'confirm-final') {
       sendJson(res, 200, { ok: true, ...(await confirmFinalExport(decodeURIComponent(jobMatch[1] || ''))) });
+      return true;
+    }
+
+    const jobArtifactMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/artifact-center$/);
+    if (jobArtifactMatch && req.method === 'GET') {
+      sendJson(res, 200, await artifactCenterPayload(decodeURIComponent(jobArtifactMatch[1] || '')));
+      return true;
+    }
+
+    const safeRerunMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/safe-rerun$/);
+    if (safeRerunMatch && req.method === 'POST') {
+      sendJson(res, 200, await safeRerunPayload(
+        decodeURIComponent(safeRerunMatch[1] || ''),
+        await readJsonBody(req),
+      ));
       return true;
     }
 
@@ -1029,12 +1280,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
 function serveStatic(res: http.ServerResponse, url: URL): void {
   const requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+  if (requested === '/favicon.ico') {
+    sendText(res, 204, '');
+    return;
+  }
   const filePath = path.resolve(PUBLIC_DIR, `.${requested}`);
   if (!filePath.startsWith(path.resolve(PUBLIC_DIR))) {
     sendText(res, 403, 'forbidden');
     return;
   }
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    if (requested === '/local-defaults.json') {
+      sendJson(res, 200, {});
+      return;
+    }
     sendText(res, 404, 'not found');
     return;
   }

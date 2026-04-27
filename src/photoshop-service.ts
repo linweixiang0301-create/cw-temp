@@ -134,6 +134,97 @@ function fileMeta(filePath: string | undefined): Record<string, unknown> | null 
   };
 }
 
+function jobArtifacts(jobState: any): Record<string, string | null> {
+  const artifacts = jobState?.result?.artifacts || {};
+  return {
+    finalImagePath: artifacts.finalImagePath || null,
+    editablePsdPath: artifacts.editablePsdPath || null,
+    previewImagePath: artifacts.previewImagePath || null,
+  };
+}
+
+function fallbackSessionFromRecord(record: ReturnType<typeof listJobs>[number], jobState: any): Record<string, unknown> {
+  const result = jobState?.result || {};
+  return {
+    sessionId: record.sessionId,
+    channelType: 'local-ui',
+    templateDisplayName: record.templateDisplayName,
+    originalPsdPath: record.originalPsdPath,
+    workingPsdPath: record.workingPsdPath,
+    status: record.status,
+    createdAt: Date.parse(record.createdAt) || 0,
+    updatedAt: result.updatedAt || Date.parse(record.createdAt) || 0,
+  };
+}
+
+export async function getPhotoshopJobArtifactCenter(sessionId: string): Promise<Record<string, unknown>> {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('缺少 Photoshop sessionId。');
+  const sessionsBridge = await loadPhotoshopSessionsBridge();
+  const jobsBridge = await loadPhotoshopJobsBridge();
+  const stateRecord = listJobs().find((record) => record.sessionId === normalizedSessionId) || null;
+  const session = sessionsBridge.photoshopSessions.getById(normalizedSessionId);
+  const jobState = jobsBridge.readPhotoshopJobState(normalizedSessionId);
+  if (!session && !stateRecord && !jobState) throw new Error('Photoshop job 不存在。');
+
+  const resolvedSession = session || (stateRecord ? fallbackSessionFromRecord(stateRecord, jobState) : {
+    sessionId: normalizedSessionId,
+    status: jobState?.result?.status || jobState?.status || 'unknown',
+  });
+  const job = jobState?.job || {};
+  const artifacts = jobArtifacts(jobState);
+  const manifestPath = job.manifestPath || (resolvedSession as Record<string, unknown>).templateManifestPath || null;
+  const originalPsdPath = job.originalPsdPath || (resolvedSession as Record<string, unknown>).originalPsdPath || stateRecord?.originalPsdPath || null;
+  const workingPsdPath = job.workingPsdPath || (resolvedSession as Record<string, unknown>).workingPsdPath || stateRecord?.workingPsdPath || null;
+  const finalImagePath = artifacts.finalImagePath || null;
+  const editablePsdPath = artifacts.editablePsdPath || null;
+  const previewImagePath = artifacts.previewImagePath || null;
+
+  return {
+    found: true,
+    sessionSource: session ? 'bridge-session-store' : stateRecord ? 'console-job-history' : 'photoshop-job-state',
+    session: resolvedSession,
+    jobState,
+    template: {
+      templateId: job.templateId || (resolvedSession as Record<string, unknown>).templateId || null,
+      templateDisplayName: job.templateDisplayName || (resolvedSession as Record<string, unknown>).templateDisplayName || null,
+      manifestPath,
+      originalPsdPath,
+      workingPsdPath,
+    },
+    actions: {
+      normalizedCount: Array.isArray(job.normalizedActions) ? job.normalizedActions.length : 0,
+      normalizedActions: Array.isArray(job.normalizedActions) ? job.normalizedActions : [],
+      resolvedAssetPaths: job.resolvedAssetPaths || {},
+    },
+    artifacts: {
+      finalImagePath,
+      editablePsdPath,
+      previewImagePath,
+    },
+    files: {
+      manifest: fileMeta(manifestPath || undefined),
+      originalPsd: fileMeta(originalPsdPath || undefined),
+      workingPsd: fileMeta(workingPsdPath || undefined),
+      finalImage: fileMeta(finalImagePath || undefined),
+      editablePsd: fileMeta(editablePsdPath || undefined),
+      previewImage: fileMeta(previewImagePath || undefined),
+    },
+    rerunCapabilities: {
+      preflight: Boolean(jobState || stateRecord || session),
+      exportFinal: Boolean(session),
+      exportFinalReason: session ? null : '当前 session 不在 Photoshop session store 中，不能直接重新排队高清导出。',
+      feishuPreflight: Boolean(finalImagePath && fileMeta(finalImagePath || undefined)),
+      feishuSend: Boolean(finalImagePath && fileMeta(finalImagePath || undefined)),
+    },
+    safety: {
+      psdDelivery: 'local_only',
+      defaultFeishuSend: 'preflight_only',
+      forceResendRequiredForDuplicate: true,
+    },
+  };
+}
+
 export async function getLatestFinalPhotoshopJob(): Promise<Record<string, unknown>> {
   const sessionsBridge = await loadPhotoshopSessionsBridge();
   const jobsBridge = await loadPhotoshopJobsBridge();
