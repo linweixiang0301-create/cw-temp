@@ -12,7 +12,18 @@ import {
   getPhotoshopStatus,
   preflightPhotoshopJob,
 } from './photoshop-service.js';
-import { deletePreset, listDownloads, listJobs, listPresets, savePreset, type ActionPresetRecord } from './state.js';
+import {
+  deleteDerivedTarget,
+  deletePreset,
+  listDerivedTargets,
+  listDownloads,
+  listJobs,
+  listPresets,
+  markDerivedTargetLoaded,
+  saveDerivedTarget,
+  savePreset,
+  type ActionPresetRecord,
+} from './state.js';
 import {
   inspectTemplateManifest,
   preflightUiActions,
@@ -432,12 +443,32 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         downloads: listDownloads(),
         jobs: listJobs(),
         presets: listPresets(),
+        derivedTargets: listDerivedTargets(),
       });
       return true;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/presets') {
       sendJson(res, 200, { ok: true, presets: listPresets() });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/derived-targets') {
+      sendJson(res, 200, { ok: true, derivedTargets: listDerivedTargets() });
+      return true;
+    }
+
+    const derivedTargetLoadedMatch = url.pathname.match(/^\/api\/derived-targets\/([^/]+)\/loaded$/);
+    if (derivedTargetLoadedMatch && req.method === 'POST') {
+      const record = markDerivedTargetLoaded(decodeURIComponent(derivedTargetLoadedMatch[1] || ''));
+      if (!record) throw new Error('派生目标记录不存在，无法更新载入时间。');
+      sendJson(res, 200, { ok: true, derivedTarget: record });
+      return true;
+    }
+
+    const derivedTargetMatch = url.pathname.match(/^\/api\/derived-targets\/([^/]+)$/);
+    if (derivedTargetMatch && req.method === 'DELETE') {
+      sendJson(res, 200, { ok: true, deleted: deleteDerivedTarget(decodeURIComponent(derivedTargetMatch[1] || '')) });
       return true;
     }
 
@@ -615,12 +646,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         return true;
       }
 
+      const targetManifest = summarizeManifestInspection(targetInspection, pairedPsdPath(targetInspection.manifestPath));
       const savedPreset = savePreset({
         name: derivedName,
         description: `从 preset「${preset.name}」派生到目标模板「${targetTemplateName}」。`,
         templateId: targetInspection.templateId,
         templateDisplayName: targetInspection.displayName,
         uiActions: derived.uiActions,
+      });
+      const derivedTargetRecord = saveDerivedTarget({
+        sourcePreset: preset,
+        targetPreset: savedPreset,
+        targetManifest: {
+          templateId: targetManifest.templateId,
+          displayName: targetManifest.displayName,
+          manifestPath: targetManifest.manifestPath,
+          psdPath: targetManifest.psdPath,
+        },
+        appliedMappings: derived.appliedMappings,
       });
       sendJson(res, 200, {
         ok: true,
@@ -633,7 +676,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           actionCount: preset.actionCount,
           slotKeys: preset.slotKeys,
         },
-        targetManifest: summarizeManifestInspection(targetInspection, pairedPsdPath(targetInspection.manifestPath)),
+        targetManifest,
+        derivedTargetRecord,
         compatibility: summarizePresetCompatibility(savedPreset, preflight),
         changes: derived.changes,
         appliedMappings: derived.appliedMappings,

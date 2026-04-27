@@ -161,6 +161,16 @@
               <button id="deletePresetBtn" type="button" class="secondary small">删除</button>
             </div>
             <div id="presetResults" class="preset-results"></div>
+            <div class="recent-derived-panel">
+              <div class="preset-head">
+                <div>
+                  <h3>最近目标模板</h3>
+                  <p>成功派生后的目标模板入口；可快速回到现场。</p>
+                </div>
+                <button id="refreshDerivedTargetsBtn" type="button" class="secondary small">刷新</button>
+              </div>
+              <div id="derivedTargetsList" class="derived-target-list"></div>
+            </div>
             <div class="cross-template-panel">
               <div class="preset-head">
                 <div>
@@ -246,6 +256,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=derived-target-loader" type="module"></script>
+    <script src="/app.js?v=derived-target-history" type="module"></script>
   </body>
 </html>

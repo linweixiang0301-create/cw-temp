@@ -1371,6 +1371,14 @@ select:focus {
   padding-top: 12px;
 }
 
+.recent-derived-panel {
+  border-top: 1px dashed #d4deec;
+  display: grid;
+  gap: 9px;
+  margin-top: 2px;
+  padding-top: 12px;
+}
+
 .preset-head h3 {
   font-size: 13px;
   line-height: 1.25;
@@ -1417,6 +1425,57 @@ select:focus {
 }
 
 .button-row.stretch.preset-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.derived-target-list {
+  display: grid;
+  gap: 8px;
+}
+
+.derived-target-card {
+  background: #f8fafc;
+  border: 1px solid #dbe7f7;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.derived-target-card.stale {
+  background: #fff8ec;
+  border-color: #f4d49b;
+}
+
+.derived-target-main {
+  display: grid;
+  gap: 3px;
+}
+
+.derived-target-main strong,
+.derived-target-main span,
+.derived-target-main small {
+  overflow-wrap: anywhere;
+}
+
+.derived-target-main strong {
+  color: #102a5f;
+  font-size: 12px;
+}
+
+.derived-target-main span {
+  color: #475467;
+  font-size: 11px;
+}
+
+.derived-target-main small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.button-row.stretch.derived-target-buttons {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 

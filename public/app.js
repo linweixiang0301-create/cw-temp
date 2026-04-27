@@ -5,6 +5,7 @@ const DEFAULT_COMPARE_MANIFEST_PATH = '';
 const state = {
   status: null,
   presets: [],
+  derivedTargets: [],
   presetCompatibility: [],
   manifestCandidates: [],
   lastCrossTemplatePayload: null,
@@ -99,6 +100,7 @@ function badge(label, value, tone = 'neutral') {
 function renderStatus(payload) {
   state.status = payload;
   state.presets = Array.isArray(payload.presets) ? payload.presets : [];
+  state.derivedTargets = Array.isArray(payload.derivedTargets) ? payload.derivedTargets : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -119,6 +121,7 @@ function renderStatus(payload) {
   renderFeishuDefaultStatus(payload.feishu);
   renderModelRoutes(payload.models || []);
   renderPresetList();
+  renderDerivedTargets();
 }
 
 function renderFeishuDefaultStatus(feishu) {
@@ -1170,6 +1173,62 @@ function presetCompatibility(presetId) {
   return (state.presetCompatibility || []).find((item) => item.presetId === presetId) || null;
 }
 
+function derivedTargetPresetExists(record) {
+  const presetId = record?.targetPreset?.id || '';
+  return Boolean(presetId && (state.presets || []).some((preset) => preset.id === presetId));
+}
+
+function derivedTargetSummary(record) {
+  const target = record?.targetManifest || {};
+  const preset = record?.targetPreset || {};
+  const source = record?.sourcePreset || {};
+  const loaded = record?.lastLoadedAt ? `上次载入 ${new Date(record.lastLoadedAt).toLocaleString('zh-CN')}` : '尚未载入';
+  return {
+    title: `${target.templateId || '目标模板'} · ${preset.name || '目标 preset'}`,
+    subtitle: `${preset.actionCount || 0} actions · ${source.name || '源 preset'} -> ${preset.name || '目标 preset'}`,
+    path: target.manifestPath || '',
+    loaded,
+  };
+}
+
+function renderDerivedTargets() {
+  const el = $('derivedTargetsList');
+  if (!el) return;
+  const records = state.derivedTargets || [];
+  if (records.length === 0) {
+    el.innerHTML = '<div class="empty">暂无派生目标。生成目标 Preset 后会自动出现在这里。</div>';
+    return;
+  }
+  el.innerHTML = records.map((record) => {
+    const summary = derivedTargetSummary(record);
+    const exists = derivedTargetPresetExists(record);
+    const mappings = Array.isArray(record.appliedMappings) ? record.appliedMappings.length : 0;
+    return `
+      <div class="derived-target-card ${exists ? '' : 'stale'}">
+        <div class="derived-target-main">
+          <strong>${escapeHtml(summary.title)}</strong>
+          <span>${escapeHtml(summary.subtitle)} · ${mappings} mappings</span>
+          <small>${escapeHtml(summary.path)}</small>
+          <small>${escapeHtml(summary.loaded)}</small>
+        </div>
+        ${exists ? '' : '<div class="issue warn"><b>preset_missing</b>目标 preset 不在本地列表中，只能载入模板，不能套用。</div>'}
+        <div class="button-row stretch derived-target-buttons">
+          <button type="button" class="secondary" data-derived-target-record-action="load" data-id="${escapeHtml(record.id)}">载入模板</button>
+          <button type="button" data-derived-target-record-action="load-apply" data-id="${escapeHtml(record.id)}" ${exists ? '' : 'disabled'}>载入并套用</button>
+          <button type="button" class="secondary" data-derived-target-record-action="delete" data-id="${escapeHtml(record.id)}">移除记录</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshDerivedTargets() {
+  const payload = await api('/api/derived-targets');
+  state.derivedTargets = Array.isArray(payload.derivedTargets) ? payload.derivedTargets : [];
+  renderDerivedTargets();
+  return state.derivedTargets;
+}
+
 function compatibilityLabel(item) {
   if (!item) return '未检查';
   if (item.status === 'ready') return `可套用 · ${item.normalizedCount || 0} normalized`;
@@ -1433,6 +1492,7 @@ async function refreshPresets() {
   const payload = await api('/api/presets');
   state.presets = Array.isArray(payload.presets) ? payload.presets : [];
   renderPresetList();
+  renderDerivedTargets();
   return state.presets;
 }
 
@@ -1529,6 +1589,7 @@ async function deriveCrossTemplatePreset() {
   });
   if (payload.saved && payload.preset?.id) {
     await refreshPresets();
+    await refreshDerivedTargets();
     $('presetSelect').value = payload.preset.id;
     renderPresetList();
   }
@@ -1606,10 +1667,30 @@ async function applySelectedPreset(options = {}) {
   `, 'html');
 }
 
-async function loadDerivedTargetTemplate({ applyPreset = false } = {}) {
-  const payload = state.lastDerivedPresetPayload;
+function payloadFromDerivedTargetRecord(record) {
+  if (!record) return null;
+  const presetId = record.targetPreset?.id || '';
+  const preset = (state.presets || []).find((item) => item.id === presetId) || {
+    id: presetId,
+    name: record.targetPreset?.name || '目标 preset',
+    actionCount: record.targetPreset?.actionCount || 0,
+    slotKeys: record.targetPreset?.slotKeys || [],
+    uiActions: [],
+  };
+  return {
+    saved: true,
+    reason: '已从最近目标模板记录恢复。',
+    preset,
+    sourcePreset: record.sourcePreset,
+    targetManifest: record.targetManifest,
+    appliedMappings: record.appliedMappings || [],
+    derivedTargetRecord: record,
+  };
+}
+
+async function loadTargetTemplateFromPayload(payload, { applyPreset = false, resultId = 'derivePresetResults' } = {}) {
   if (!payload?.saved || !payload?.targetManifest?.manifestPath) {
-    setMessage('derivePresetResults', '<div class="issue err"><b>derived_target_missing</b>请先生成已保存的目标模板 preset。</div>', 'html');
+    setMessage(resultId, '<div class="issue err"><b>derived_target_missing</b>请先生成已保存的目标模板 preset。</div>', 'html');
     return;
   }
   const target = payload.targetManifest;
@@ -1617,30 +1698,59 @@ async function loadDerivedTargetTemplate({ applyPreset = false } = {}) {
   $('manifestPath').value = target.manifestPath || '';
   $('psdPath').value = target.psdPath || '';
   resetActionQueue();
-  setMessage('derivePresetResults', '<div class="empty">正在载入目标模板真实 manifest...</div>', 'html');
+  setMessage(resultId, '<div class="empty">正在载入目标模板真实 manifest...</div>', 'html');
   await loadManifest();
   await refreshPresets();
   if (presetId && (state.presets || []).some((preset) => preset.id === presetId)) {
     $('presetSelect').value = presetId;
     renderPresetList();
   }
+  const recordId = payload.derivedTargetRecord?.id || payload.derivedTarget?.id || '';
+  if (recordId) {
+    await api(`/api/derived-targets/${encodeURIComponent(recordId)}/loaded`, { method: 'POST', body: '{}' });
+    await refreshDerivedTargets();
+  }
   if (applyPreset) {
-    const preset = (state.presets || []).find((item) => item.id === presetId) || payload.preset;
+    const preset = (state.presets || []).find((item) => item.id === presetId) || null;
+    if (!preset) {
+      setMessage(resultId, `
+        <div class="preflight-status blocked">
+          <strong>目标模板已载入，但 preset 缺失</strong>
+          <span>${escapeHtml(payload.preset?.name || presetId || '未知 preset')}</span>
+        </div>
+      `, 'html');
+      return;
+    }
     await applySelectedPreset({
       preset,
       replaceQueue: true,
-      resultId: 'derivePresetResults',
+      resultId,
       successTitle: '目标模板已载入并套用 Preset',
     });
     return;
   }
-  setMessage('derivePresetResults', `
+  setMessage(resultId, `
     <div class="preflight-status ready">
       <strong>目标模板已载入</strong>
       <span>${escapeHtml(target.templateId || target.manifestPath)}</span>
     </div>
     ${renderDerivedPresetResult(payload)}
   `, 'html');
+}
+
+async function loadDerivedTargetTemplate({ applyPreset = false } = {}) {
+  return loadTargetTemplateFromPayload(state.lastDerivedPresetPayload, {
+    applyPreset,
+    resultId: 'derivePresetResults',
+  });
+}
+
+async function loadDerivedTargetRecord(record, { applyPreset = false } = {}) {
+  const payload = payloadFromDerivedTargetRecord(record);
+  return loadTargetTemplateFromPayload(payload, {
+    applyPreset,
+    resultId: 'presetResults',
+  });
 }
 
 async function deleteSelectedPreset() {
@@ -1957,7 +2067,36 @@ $('runCrossTemplateBtn').addEventListener('click', () => runCrossTemplateValidat
 $('derivePresetBtn').addEventListener('click', () => deriveCrossTemplatePreset().catch((error) => {
   setMessage('derivePresetResults', error.payload || error.message);
 }));
+$('refreshDerivedTargetsBtn').addEventListener('click', () => refreshDerivedTargets().catch((error) => {
+  setMessage('presetResults', error.payload || error.message);
+}));
 document.addEventListener('click', (event) => {
+  const recordButton = event.target.closest('[data-derived-target-record-action]');
+  if (recordButton) {
+    const id = recordButton.dataset.id || '';
+    const action = recordButton.dataset.derivedTargetRecordAction || '';
+    const record = (state.derivedTargets || []).find((item) => item.id === id);
+    if (!record) {
+      setMessage('presetResults', '<div class="issue err"><b>derived_record_missing</b>本地派生目标记录不存在。</div>', 'html');
+      return;
+    }
+    if (action === 'delete') {
+      api(`/api/derived-targets/${encodeURIComponent(id)}`, { method: 'DELETE' })
+        .then(() => refreshDerivedTargets())
+        .then(() => setMessage('presetResults', `
+          <div class="preflight-status blocked">
+            <strong>派生目标记录已移除</strong>
+            <span>${escapeHtml(record.targetManifest?.templateId || record.targetManifest?.manifestPath || id)}</span>
+          </div>
+        `, 'html'))
+        .catch((error) => setMessage('presetResults', error.payload || error.message));
+      return;
+    }
+    loadDerivedTargetRecord(record, { applyPreset: action === 'load-apply' }).catch((error) => {
+      setMessage('presetResults', error.payload || error.message);
+    });
+    return;
+  }
   const button = event.target.closest('[data-derived-target-action]');
   if (!button) return;
   const action = button.dataset.derivedTargetAction || '';
@@ -2083,6 +2222,7 @@ renderTemplatePreview();
 renderQueue();
 renderPreflight();
 renderPresetList();
+renderDerivedTargets();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));
