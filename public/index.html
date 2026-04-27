@@ -240,6 +240,16 @@
             </label>
           </div>
           <label class="field">
+            <span>目标备注</span>
+            <input id="feishuTargetLabel" placeholder="例如：运营群 / 负责人私聊">
+          </label>
+          <div class="button-row stretch feishu-target-actions">
+            <button id="saveFeishuTargetBtn" type="button" class="secondary">保存当前目标</button>
+            <button id="clearFeishuTargetBtn" type="button" class="secondary">清空目标</button>
+            <button id="refreshFeishuTargetsBtn" type="button" class="secondary">刷新最近目标</button>
+          </div>
+          <div id="feishuTargetList" class="feishu-target-list"></div>
+          <label class="field">
             <span>最终图片路径</span>
             <input id="finalImagePath" placeholder="/path/to/final.png">
           </label>
@@ -258,6 +268,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=derived-target-history" type="module"></script>
+    <script src="/app.js?v=feishu-targets" type="module"></script>
   </body>
 </html>

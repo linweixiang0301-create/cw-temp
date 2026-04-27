@@ -72,17 +72,28 @@ export type DerivedTargetRecord = {
   }>;
 };
 
+export type FeishuTargetRecord = {
+  id: string;
+  type: 'chat' | 'user';
+  value: string;
+  label?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string | null;
+};
+
 type StateShape = {
   downloads: DownloadRecord[];
   jobs: ConsoleJobRecord[];
   presets: ActionPresetRecord[];
   derivedTargets: DerivedTargetRecord[];
+  feishuTargets: FeishuTargetRecord[];
 };
 
 const STATE_PATH = runtimePath('console-state.json');
 
 function emptyState(): StateShape {
-  return { downloads: [], jobs: [], presets: [], derivedTargets: [] };
+  return { downloads: [], jobs: [], presets: [], derivedTargets: [], feishuTargets: [] };
 }
 
 function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape {
@@ -91,6 +102,7 @@ function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape
     jobs: Array.isArray(raw?.jobs) ? raw.jobs : [],
     presets: Array.isArray(raw?.presets) ? raw.presets : [],
     derivedTargets: Array.isArray(raw?.derivedTargets) ? raw.derivedTargets : [],
+    feishuTargets: Array.isArray(raw?.feishuTargets) ? raw.feishuTargets : [],
   };
 }
 
@@ -243,4 +255,61 @@ export function deleteDerivedTarget(id: string): boolean {
   state.derivedTargets = state.derivedTargets.filter((record) => record.id !== id);
   writeState(state);
   return state.derivedTargets.length !== before;
+}
+
+export function listFeishuTargets(): FeishuTargetRecord[] {
+  return readState().feishuTargets.slice(0, 30);
+}
+
+export function saveFeishuTarget(input: {
+  type: FeishuTargetRecord['type'];
+  value: string;
+  label?: string;
+}): FeishuTargetRecord {
+  const value = input.value.trim();
+  if (!value) throw new Error('飞书目标 ID 不能为空。');
+  const state = readState();
+  const now = new Date().toISOString();
+  const existing = state.feishuTargets.find((target) => target.type === input.type && target.value === value);
+  const record: FeishuTargetRecord = {
+    id: existing?.id || crypto.randomUUID(),
+    type: input.type,
+    value,
+    label: input.label?.trim() || existing?.label || undefined,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    lastUsedAt: existing?.lastUsedAt || null,
+  };
+  state.feishuTargets = [
+    record,
+    ...state.feishuTargets.filter((target) => target.id !== record.id && !(target.type === record.type && target.value === record.value)),
+  ].slice(0, 30);
+  writeState(state);
+  return record;
+}
+
+export function markFeishuTargetUsed(input: {
+  type: FeishuTargetRecord['type'];
+  value: string;
+}): FeishuTargetRecord | null {
+  const state = readState();
+  const now = new Date().toISOString();
+  let updated: FeishuTargetRecord | null = null;
+  state.feishuTargets = state.feishuTargets.map((target) => {
+    if (target.type !== input.type || target.value !== input.value) return target;
+    updated = { ...target, updatedAt: now, lastUsedAt: now };
+    return updated;
+  });
+  if (!updated) return null;
+  state.feishuTargets = [updated, ...state.feishuTargets.filter((target) => target.id !== updated?.id)].slice(0, 30);
+  writeState(state);
+  return updated;
+}
+
+export function deleteFeishuTarget(id: string): boolean {
+  const state = readState();
+  const before = state.feishuTargets.length;
+  state.feishuTargets = state.feishuTargets.filter((target) => target.id !== id);
+  writeState(state);
+  return state.feishuTargets.length !== before;
 }

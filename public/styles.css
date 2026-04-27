@@ -1479,6 +1479,53 @@ select:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.feishu-target-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.feishu-target-card {
+  background: #f8fafc;
+  border: 1px solid #dbe7f7;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.feishu-target-main {
+  display: grid;
+  gap: 3px;
+}
+
+.feishu-target-main strong,
+.feishu-target-main span,
+.feishu-target-main small {
+  overflow-wrap: anywhere;
+}
+
+.feishu-target-main strong {
+  color: #102a5f;
+  font-size: 12px;
+}
+
+.feishu-target-main span {
+  color: #475467;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.feishu-target-main small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.button-row.stretch.feishu-target-actions,
+.button-row.stretch.feishu-target-buttons {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .button-row.stretch.feishu-actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

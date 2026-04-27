@@ -6,6 +6,7 @@ const state = {
   status: null,
   presets: [],
   derivedTargets: [],
+  feishuTargets: [],
   latestFinalJob: null,
   lastAutoFinalImagePath: '',
   presetCompatibility: [],
@@ -103,6 +104,7 @@ function renderStatus(payload) {
   state.status = payload;
   state.presets = Array.isArray(payload.presets) ? payload.presets : [];
   state.derivedTargets = Array.isArray(payload.derivedTargets) ? payload.derivedTargets : [];
+  state.feishuTargets = Array.isArray(payload.feishuTargets) ? payload.feishuTargets : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -124,16 +126,20 @@ function renderStatus(payload) {
   renderModelRoutes(payload.models || []);
   renderPresetList();
   renderDerivedTargets();
+  renderFeishuTargets();
 }
 
 function renderFeishuDefaultStatus(feishu) {
   const chatReady = Boolean(feishu?.hasChatTarget);
   const userReady = Boolean(feishu?.hasUserTarget);
+  const localCount = state.feishuTargets.length;
   const label = chatReady
     ? '已配置默认 Chat ID'
     : userReady
       ? '已配置默认 User ID'
-      : '未配置默认目标，需要手动填写 Chat ID 或 User ID';
+      : localCount > 0
+        ? `未配置默认目标，可复用 ${localCount} 个本地最近目标`
+        : '未配置默认目标，需要手动填写 Chat ID 或 User ID';
   $('feishuDefaultStatus').innerHTML = `
     <div class="target-dot ${chatReady || userReady ? 'ok' : 'warn'}"></div>
     <span>${escapeHtml(label)}</span>
@@ -1912,6 +1918,107 @@ function setFeishuBusy(busy, label = '发送中...') {
   if ($('backfillLatestFinalBtn')) $('backfillLatestFinalBtn').disabled = busy;
 }
 
+function activeFeishuTarget() {
+  const chatId = $('feishuChatId')?.value?.trim() || '';
+  const userId = $('feishuUserId')?.value?.trim() || '';
+  const label = $('feishuTargetLabel')?.value?.trim() || '';
+  if (chatId) return { type: 'chat', value: chatId, label };
+  if (userId) return { type: 'user', value: userId, label };
+  return null;
+}
+
+function fillFeishuTarget(target) {
+  if (!target) return;
+  if (target.type === 'chat') {
+    $('feishuChatId').value = target.value || '';
+    $('feishuUserId').value = '';
+  } else {
+    $('feishuUserId').value = target.value || '';
+    $('feishuChatId').value = '';
+  }
+  if ($('feishuTargetLabel')) $('feishuTargetLabel').value = target.label || '';
+  setMessage('feishuResults', `
+    <div class="job-status ready">
+      <strong>已载入飞书目标</strong>
+      <span>${escapeHtml(feishuTargetLabel({ ...target, source: 'body' }))}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>发送目标</strong><span>${escapeHtml(target.label || target.value || '-')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `, 'html');
+}
+
+function targetLastUsedLabel(target) {
+  if (target.lastUsedAt) return `上次发送 ${formatLocalDateTime(target.lastUsedAt)}`;
+  if (target.updatedAt) return `更新 ${formatLocalDateTime(target.updatedAt)}`;
+  return '尚未发送';
+}
+
+function renderFeishuTargets() {
+  const el = $('feishuTargetList');
+  if (!el) return;
+  const targets = state.feishuTargets || [];
+  if (targets.length === 0) {
+    el.innerHTML = '<div class="empty">暂无本地保存的飞书目标。</div>';
+    return;
+  }
+  el.innerHTML = targets.map((target) => `
+    <div class="feishu-target-card">
+      <div class="feishu-target-main">
+        <strong>${escapeHtml(target.label || (target.type === 'chat' ? '群聊目标' : '用户目标'))}</strong>
+        <span>${escapeHtml(target.type === 'chat' ? `chat:${target.value}` : `user:${target.value}`)}</span>
+        <small>${escapeHtml(targetLastUsedLabel(target))}</small>
+      </div>
+      <div class="button-row stretch feishu-target-buttons">
+        <button type="button" data-feishu-target-action="use" data-id="${escapeHtml(target.id)}">使用</button>
+        <button type="button" class="secondary" data-feishu-target-action="preflight" data-id="${escapeHtml(target.id)}">载入并预检</button>
+        <button type="button" class="secondary" data-feishu-target-action="delete" data-id="${escapeHtml(target.id)}">删除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function refreshFeishuTargets() {
+  const payload = await api('/api/feishu/targets');
+  state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
+  renderFeishuTargets();
+  renderFeishuDefaultStatus(state.status?.feishu || {});
+  return state.feishuTargets;
+}
+
+async function saveCurrentFeishuTarget() {
+  const target = activeFeishuTarget();
+  if (!target) throw new Error('请先填写真实 Chat ID 或 User ID。');
+  const payload = await api('/api/feishu/targets', {
+    method: 'POST',
+    body: JSON.stringify(target),
+  });
+  state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
+  renderFeishuTargets();
+  renderFeishuDefaultStatus(state.status?.feishu || {});
+  setMessage('feishuResults', `
+    <div class="job-status ready">
+      <strong>已保存飞书目标</strong>
+      <span>${escapeHtml(feishuTargetLabel({ ...payload.target, source: 'body' }))}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>备注</strong><span>${escapeHtml(payload.target?.label || '-')}</span></div>
+      <div><strong>发送</strong><span>未发送消息，仅保存本地目标</span></div>
+    </div>
+  `, 'html');
+}
+
+async function deleteFeishuTarget(id) {
+  const payload = await api(`/api/feishu/targets/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: '{}',
+  });
+  state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
+  renderFeishuTargets();
+  renderFeishuDefaultStatus(state.status?.feishu || {});
+}
+
 function renderLatestFinalStatus(latest) {
   const el = $('latestFinalStatus');
   if (!el) return;
@@ -2371,6 +2478,58 @@ $('confirmFinalBtn').addEventListener('click', async () => {
   }
 });
 
+$('feishuChatId').addEventListener('input', () => {
+  if ($('feishuChatId').value.trim()) $('feishuUserId').value = '';
+});
+
+$('feishuUserId').addEventListener('input', () => {
+  if ($('feishuUserId').value.trim()) $('feishuChatId').value = '';
+});
+
+$('saveFeishuTargetBtn').addEventListener('click', async () => {
+  try {
+    await saveCurrentFeishuTarget();
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
+$('clearFeishuTargetBtn').addEventListener('click', () => {
+  $('feishuChatId').value = '';
+  $('feishuUserId').value = '';
+  $('feishuTargetLabel').value = '';
+  setMessage('feishuResults', '已清空当前飞书目标。');
+});
+
+$('refreshFeishuTargetsBtn').addEventListener('click', async () => {
+  try {
+    await refreshFeishuTargets();
+    setMessage('feishuResults', '已刷新本地最近飞书目标。');
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
+$('feishuTargetList').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-feishu-target-action]');
+  if (!button) return;
+  const target = state.feishuTargets.find((item) => item.id === button.dataset.id);
+  if (!target && button.dataset.feishuTargetAction !== 'delete') return;
+  try {
+    if (button.dataset.feishuTargetAction === 'use') {
+      fillFeishuTarget(target);
+    } else if (button.dataset.feishuTargetAction === 'preflight') {
+      fillFeishuTarget(target);
+      await preflightFeishu();
+    } else if (button.dataset.feishuTargetAction === 'delete') {
+      await deleteFeishuTarget(button.dataset.id);
+      setMessage('feishuResults', '已删除本地飞书目标。');
+    }
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
 $('preflightFeishuBtn').addEventListener('click', async () => {
   try {
     setMessage('feishuResults', '正在进行发送前预检...');
@@ -2402,6 +2561,7 @@ renderQueue();
 renderPreflight();
 renderPresetList();
 renderDerivedTargets();
+renderFeishuTargets();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));

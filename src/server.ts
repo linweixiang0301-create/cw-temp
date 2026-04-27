@@ -15,13 +15,17 @@ import {
 } from './photoshop-service.js';
 import {
   deleteDerivedTarget,
+  deleteFeishuTarget,
   deletePreset,
+  listFeishuTargets,
   listDerivedTargets,
   listDownloads,
   listJobs,
   listPresets,
+  markFeishuTargetUsed,
   markDerivedTargetLoaded,
   saveDerivedTarget,
+  saveFeishuTarget,
   savePreset,
   type ActionPresetRecord,
 } from './state.js';
@@ -66,6 +70,12 @@ type DerivedActionChange = {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function badRequest(message: string): Error {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = 400;
+  return error;
 }
 
 function errorStatusCode(error: unknown): number {
@@ -206,6 +216,15 @@ function actionCapability(action: UiAction): SlotCapability | null {
 
 function isSlotCapability(value: string): value is SlotCapability {
   return value === 'text' || value === 'image' || value === 'transform' || value === 'toggle';
+}
+
+function isFeishuTargetType(value: string): value is 'chat' | 'user' {
+  return value === 'chat' || value === 'user';
+}
+
+function feishuTargetLooksValid(type: 'chat' | 'user', value: string): boolean {
+  if (type === 'chat') return /^oc_[A-Za-z0-9_-]+$/.test(value);
+  return /^ou_[A-Za-z0-9_-]+$/.test(value);
 }
 
 function mappingKey(slotKey: string, capability: SlotCapability): string {
@@ -445,6 +464,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         jobs: listJobs(),
         presets: listPresets(),
         derivedTargets: listDerivedTargets(),
+        feishuTargets: listFeishuTargets(),
       });
       return true;
     }
@@ -456,6 +476,37 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
     if (req.method === 'GET' && url.pathname === '/api/derived-targets') {
       sendJson(res, 200, { ok: true, derivedTargets: listDerivedTargets() });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/feishu/targets') {
+      sendJson(res, 200, { ok: true, targets: listFeishuTargets() });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/feishu/targets') {
+      const body = await readJsonBody<{ type?: string; value?: string; label?: string }>(req);
+      const type = String(body.type || '').trim();
+      const value = String(body.value || '').trim();
+      if (!isFeishuTargetType(type)) throw badRequest('飞书目标类型必须是 chat 或 user。');
+      if (!feishuTargetLooksValid(type, value)) {
+        throw badRequest(`${type === 'chat' ? 'Chat ID' : 'User ID'} 格式不符合预期。`);
+      }
+      sendJson(res, 200, {
+        ok: true,
+        target: saveFeishuTarget({ type, value, label: body.label }),
+        targets: listFeishuTargets(),
+      });
+      return true;
+    }
+
+    const feishuTargetMatch = url.pathname.match(/^\/api\/feishu\/targets\/([^/]+)$/);
+    if (feishuTargetMatch && req.method === 'DELETE') {
+      sendJson(res, 200, {
+        ok: true,
+        deleted: deleteFeishuTarget(decodeURIComponent(feishuTargetMatch[1] || '')),
+        targets: listFeishuTargets(),
+      });
       return true;
     }
 
@@ -794,7 +845,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
 
     if (req.method === 'POST' && url.pathname === '/api/feishu/send-final') {
-      sendJson(res, 200, await sendFinalToFeishu(await readJsonBody(req)));
+      const payload = await sendFinalToFeishu(await readJsonBody(req));
+      const target = (payload.receipt as { target?: { type?: string; value?: string } } | undefined)?.target;
+      const targetType = String(target?.type || '').trim();
+      const targetValue = String(target?.value || '').trim();
+      if (isFeishuTargetType(targetType) && targetValue) {
+        markFeishuTargetUsed({ type: targetType, value: targetValue });
+      }
+      sendJson(res, 200, payload);
       return true;
     }
 
