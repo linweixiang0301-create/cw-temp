@@ -234,6 +234,10 @@ function feishuSendRecordFromPayload(payload: Record<string, unknown>): Paramete
   const finalImage = (receipt.finalImage || {}) as Record<string, any>;
   const target = (receipt.target || null) as Record<string, any> | null;
   const preflight = (payload.preflight || {}) as Record<string, any>;
+  const messages = Array.isArray(receipt.messages) ? receipt.messages : [];
+  const messageIds = Array.isArray(receipt.messageIds)
+    ? receipt.messageIds.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+    : messages.map((message: Record<string, any>) => String(message?.messageId || '').trim()).filter(Boolean);
   return {
     status: 'sent',
     createdAt: String(receipt.sentAt || new Date().toISOString()),
@@ -251,6 +255,12 @@ function feishuSendRecordFromPayload(payload: Record<string, unknown>): Paramete
       delivery: finalImage.delivery ? String(finalImage.delivery) : null,
     },
     messageCount: typeof receipt.messageCount === 'number' ? receipt.messageCount : null,
+    messageIds,
+    messages: messages.map((message: Record<string, any>) => ({
+      messageId: message?.messageId ? String(message.messageId) : null,
+      type: message?.type ? String(message.type) : null,
+      createTime: message?.createTime ? String(message.createTime) : null,
+    })),
     preflightStatus: preflight.status ? String(preflight.status) : null,
     error: null,
     findings: [],
@@ -291,6 +301,8 @@ function feishuSendRecordFromError(
       delivery: artifact?.delivery ? String(artifact.delivery) : null,
     },
     messageCount: 0,
+    messageIds: [],
+    messages: [],
     preflightStatus: details?.status ? String(details.status) : null,
     error: safeError(error),
     findings: Array.isArray(details?.findings) ? details.findings.map((item: Record<string, any>) => ({
@@ -299,6 +311,55 @@ function feishuSendRecordFromError(
     })) : [],
     psdDelivery: 'local_only',
   };
+}
+
+function normalizeMaybePath(value: unknown): string {
+  const raw = String(value || '').trim();
+  return raw ? path.resolve(raw) : '';
+}
+
+function findDuplicateFeishuSend(preflight: Record<string, any>): Record<string, unknown> | null {
+  if (preflight.status !== 'ready') return null;
+  const target = preflight.target as Record<string, any> | null;
+  const artifact = Array.isArray(preflight.artifacts)
+    ? preflight.artifacts.find((item: Record<string, any>) => item?.key === 'imagePath')
+    : null;
+  const imagePath = normalizeMaybePath(artifact?.path);
+  if (!target?.type || !target?.value || !imagePath) return null;
+  const duplicate = listFeishuSendHistory().find((record) => (
+    record.status === 'sent'
+    && record.target?.type === target.type
+    && record.target?.value === target.value
+    && normalizeMaybePath(record.finalImage?.path) === imagePath
+  ));
+  if (!duplicate) return null;
+  return {
+    id: duplicate.id,
+    sentAt: duplicate.createdAt,
+    target: duplicate.target,
+    finalImage: duplicate.finalImage,
+    messageCount: duplicate.messageCount ?? null,
+    messageIds: duplicate.messageIds || [],
+    psdDelivery: duplicate.psdDelivery,
+  };
+}
+
+function addDuplicateSendInfo(preflight: Record<string, unknown>): Record<string, unknown> {
+  const duplicateSend = findDuplicateFeishuSend(preflight as Record<string, any>);
+  return {
+    ...preflight,
+    duplicateSend,
+  };
+}
+
+function duplicateSendError(preflight: Record<string, unknown>): Error {
+  const error = new Error('同一飞书目标已发送过当前 final.png；如需再次投递，请明确选择“再次发送”。') as Error & {
+    statusCode: number;
+    details: unknown;
+  };
+  error.statusCode = 409;
+  error.details = preflight;
+  return error;
 }
 
 function mappingKey(slotKey: string, capability: SlotCapability): string {
@@ -927,7 +988,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     if (req.method === 'POST' && url.pathname === '/api/feishu/send-final') {
       const body = await readJsonBody(req);
       try {
+        const preflight = addDuplicateSendInfo(await preflightFinalToFeishu(body));
+        if ((preflight as { duplicateSend?: unknown }).duplicateSend && !(body as { forceResend?: boolean }).forceResend) {
+          throw duplicateSendError(preflight);
+        }
         const payload = await sendFinalToFeishu(body);
+        payload.preflight = addDuplicateSendInfo(payload.preflight as Record<string, unknown>);
         const target = (payload.receipt as { target?: { type?: string; value?: string } } | undefined)?.target;
         const targetType = String(target?.type || '').trim();
         const targetValue = String(target?.value || '').trim();
@@ -944,7 +1010,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
 
     if (req.method === 'POST' && url.pathname === '/api/feishu/preflight-final') {
-      sendJson(res, 200, { ok: true, preflight: await preflightFinalToFeishu(await readJsonBody(req)) });
+      sendJson(res, 200, { ok: true, preflight: addDuplicateSendInfo(await preflightFinalToFeishu(await readJsonBody(req))) });
       return true;
     }
 

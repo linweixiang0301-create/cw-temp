@@ -13,6 +13,7 @@ type SendFinalInput = {
   text?: string;
   imagePath?: string;
   filePath?: string;
+  forceResend?: boolean;
 };
 
 type FeishuTarget = {
@@ -64,6 +65,16 @@ function preflightError(message: string, details: unknown): Error {
 function targetLooksValid(target: FeishuTarget): boolean {
   if (target.type === 'chat') return /^oc_[A-Za-z0-9_-]+$/.test(target.value);
   return /^ou_[A-Za-z0-9_-]+$/.test(target.value);
+}
+
+function messageReceipt(payload: Record<string, unknown>, fallbackType: string): Record<string, unknown> {
+  const data = (payload.data || {}) as Record<string, unknown>;
+  return {
+    messageId: data.message_id ? String(data.message_id) : null,
+    type: fallbackType,
+    createTime: data.create_time ? String(data.create_time) : null,
+    chatId: data.chat_id ? String(data.chat_id) : null,
+  };
 }
 
 export async function getFeishuStatus(): Promise<Record<string, unknown>> {
@@ -119,8 +130,10 @@ export async function preflightFinalToFeishu(input: SendFinalInput): Promise<Rec
     artifacts: artifacts.map((artifact) => ({
       key: artifact.key,
       path: artifact.path || null,
+      fileName: artifact.path ? path.basename(artifact.path) : null,
       exists: artifact.path ? fs.existsSync(artifact.path) : false,
       sizeBytes: artifact.path && fs.existsSync(artifact.path) ? fs.statSync(artifact.path).size : null,
+      modifiedAt: artifact.path && fs.existsSync(artifact.path) ? fs.statSync(artifact.path).mtimeMs : null,
       delivery: artifact.path && fs.existsSync(artifact.path)
         ? fs.statSync(artifact.path).size <= FEISHU_IMAGE_MESSAGE_MAX_BYTES ? 'image_message' : 'png_file'
         : null,
@@ -138,8 +151,11 @@ export async function sendFinalToFeishu(input: SendFinalInput): Promise<Record<s
   const target = resolveTarget(input);
   if (!target) throw preflightError('飞书发送预检未通过。', preflight);
   const sent: unknown[] = [];
+  const messages: Record<string, unknown>[] = [];
   const text = String(input.text || 'PS 自动化任务已完成。').trim();
-  sent.push(await runLarkCli(['im', '+messages-send', ...target.args, '--text', text, '--as', 'bot']));
+  const textResult = await runLarkCli(['im', '+messages-send', ...target.args, '--text', text, '--as', 'bot']);
+  sent.push(textResult);
+  messages.push(messageReceipt(textResult, 'text'));
 
   const imagePath = String(input.imagePath || '').trim();
   let finalImage: Record<string, unknown> | null = null;
@@ -148,14 +164,18 @@ export async function sendFinalToFeishu(input: SendFinalInput): Promise<Record<s
     const image = localFileForLarkCli(imagePath);
     const size = fs.statSync(imagePath).size;
     const mediaFlag = size <= FEISHU_IMAGE_MESSAGE_MAX_BYTES ? '--image' : '--file';
-    sent.push(await runLarkCli(['im', '+messages-send', ...target.args, mediaFlag, image.arg, '--as', 'bot'], { cwd: image.cwd }));
+    const imageResult = await runLarkCli(['im', '+messages-send', ...target.args, mediaFlag, image.arg, '--as', 'bot'], { cwd: image.cwd });
+    sent.push(imageResult);
+    messages.push(messageReceipt(imageResult, mediaFlag === '--image' ? 'image' : 'file'));
     finalImage = {
       path: imagePath,
       fileName: path.basename(imagePath),
       sizeBytes: size,
+      modifiedAt: fs.statSync(imagePath).mtimeMs,
       delivery: mediaFlag === '--image' ? 'image_message' : 'png_file',
     };
   }
+  const messageIds = messages.map((message) => String(message.messageId || '').trim()).filter(Boolean);
   return {
     ok: true,
     status: 'sent',
@@ -165,6 +185,8 @@ export async function sendFinalToFeishu(input: SendFinalInput): Promise<Record<s
       target: { type: target.type, value: target.value, source: target.source },
       finalImage,
       messageCount: sent.length,
+      messageIds,
+      messages,
       psdDelivery: 'local_only',
     },
     sent,

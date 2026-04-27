@@ -8,6 +8,8 @@ const state = {
   derivedTargets: [],
   feishuTargets: [],
   feishuSendHistory: [],
+  expandedSendHistoryId: '',
+  lastFeishuPreflight: null,
   latestFinalJob: null,
   lastAutoFinalImagePath: '',
   presetCompatibility: [],
@@ -1328,21 +1330,39 @@ function renderManifestCandidateList() {
   }
 }
 
+function rememberedMappingForSuggestion(suggestion) {
+  const preset = selectedPreset();
+  const targetManifestPath = $('crossManifestPath')?.value?.trim() || '';
+  if (!preset || !targetManifestPath) return null;
+  const records = state.derivedTargets || [];
+  for (const record of records) {
+    if (record.sourcePreset?.id !== preset.id) continue;
+    if (normalizedLocalPath(record.targetManifest?.manifestPath) !== normalizedLocalPath(targetManifestPath)) continue;
+    const mapping = (record.appliedMappings || []).find((item) => (
+      item.sourceSlotKey === suggestion.sourceSlotKey && item.capability === suggestion.capability
+    ));
+    if (mapping) return mapping;
+  }
+  return null;
+}
+
 function renderMappingSuggestion(suggestion) {
   const candidates = Array.isArray(suggestion.candidates) ? suggestion.candidates : [];
+  const remembered = rememberedMappingForSuggestion(suggestion);
   return `
     <div class="mapping-suggestion">
       <div>
         <strong>${escapeHtml(suggestion.sourceSlotKey)} · ${escapeHtml(suggestion.capability)}</strong>
         <span>${escapeHtml(suggestion.sourceLayerPath || '源模板未提供 layerPath')}</span>
       </div>
+      ${remembered ? `<div class="mapping-memory"><b>历史映射</b><span>${escapeHtml(remembered.sourceSlotKey)} -> ${escapeHtml(remembered.targetSlotKey)}</span></div>` : ''}
       ${candidates.length ? `
         <label class="field compact mapping-confirm-field">
           <span>确认映射到目标 slot</span>
           <select class="mapping-target-select" data-source-slot-key="${escapeHtml(suggestion.sourceSlotKey)}" data-capability="${escapeHtml(suggestion.capability)}">
             <option value="">不映射 / 手动处理</option>
             ${candidates.map((candidate) => `
-              <option value="${escapeHtml(candidate.targetSlotKey)}">${escapeHtml(candidate.targetSlotKey)} · ${escapeHtml(candidate.confidence)} · ${escapeHtml(candidate.reason)}</option>
+              <option value="${escapeHtml(candidate.targetSlotKey)}" ${remembered?.targetSlotKey === candidate.targetSlotKey ? 'selected' : ''}>${escapeHtml(candidate.targetSlotKey)}${remembered?.targetSlotKey === candidate.targetSlotKey ? ' · 历史复用' : ''} · ${escapeHtml(candidate.confidence)} · ${escapeHtml(candidate.reason)}</option>
             `).join('')}
           </select>
         </label>
@@ -1905,11 +1925,44 @@ function formatLocalDateTime(value) {
   return date.toLocaleString('zh-CN');
 }
 
+function formatFileMtime(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-';
+  return formatLocalDateTime(value);
+}
+
 function feishuTargetLabel(target) {
   if (!target) return '未选择';
   const prefix = target.type === 'chat' ? '群聊' : '用户';
   const source = target.source === 'env' ? '默认配置' : '手动填写';
   return `${prefix}:${target.value} (${source})`;
+}
+
+function activeFeishuTargetKey() {
+  const target = activeFeishuTarget();
+  if (target) return `${target.type}:${target.value}`;
+  if (state.status?.feishu?.hasChatTarget) return 'env:chat';
+  if (state.status?.feishu?.hasUserTarget) return 'env:user';
+  return '';
+}
+
+function recordTargetKey(record) {
+  const target = record?.target || {};
+  return target.type && target.value ? `${target.type}:${target.value}` : '';
+}
+
+function normalizedLocalPath(filePath) {
+  return String(filePath || '').trim();
+}
+
+function findDuplicateSendForCurrent() {
+  const finalImagePath = normalizedLocalPath($('finalImagePath')?.value || '');
+  const targetKey = activeFeishuTargetKey();
+  if (!finalImagePath || !targetKey) return null;
+  return (state.feishuSendHistory || []).find((record) => (
+    record.status === 'sent'
+    && recordTargetKey(record) === targetKey
+    && normalizedLocalPath(record.finalImage?.path) === finalImagePath
+  )) || null;
 }
 
 function setFeishuBusy(busy, label = '发送中...') {
@@ -1921,6 +1974,7 @@ function setFeishuBusy(busy, label = '发送中...') {
   if ($('preflightFeishuBtn')) $('preflightFeishuBtn').disabled = busy;
   if ($('backfillLatestFinalBtn')) $('backfillLatestFinalBtn').disabled = busy;
   if ($('loadRecentAndSendBtn')) $('loadRecentAndSendBtn').disabled = busy;
+  if ($('resendFeishuBtn')) $('resendFeishuBtn').disabled = busy;
   if (!busy) renderFeishuReadiness();
 }
 
@@ -1942,18 +1996,107 @@ function feishuReadiness() {
   const target = activeFeishuTarget();
   const defaultTargetReady = hasDefaultFeishuTarget();
   const targetReady = Boolean(target || defaultTargetReady);
+  const duplicateSend = findDuplicateSendForCurrent();
   const targetLabel = target
     ? feishuTargetLabel({ ...target, source: 'body' })
     : defaultTargetReady
       ? '默认飞书目标'
       : '未选择飞书目标';
   return {
-    ready: Boolean(finalImagePath && targetReady),
+    ready: Boolean(finalImagePath && targetReady && !duplicateSend),
     finalImagePath,
     finalReady: Boolean(finalImagePath),
     targetReady,
     targetLabel,
+    duplicateSend,
   };
+}
+
+function latestFinalMetadataForPath(filePath) {
+  const latest = state.latestFinalJob || {};
+  const artifacts = latest.artifacts || {};
+  if (normalizedLocalPath(artifacts.finalImagePath) !== normalizedLocalPath(filePath)) return null;
+  return {
+    sessionId: latest.session?.sessionId || '',
+    status: latest.jobState?.result?.status || '',
+    sizeBytes: latest.files?.finalImage?.size,
+    modifiedAt: latest.files?.finalImage?.updatedAt,
+    delivery: latest.files?.finalImage?.size <= 5 * 1024 * 1024 ? 'image_message' : 'png_file',
+  };
+}
+
+function preflightMetadataForPath(filePath) {
+  const artifact = (state.lastFeishuPreflight?.artifacts || []).find((item) => (
+    item.key === 'imagePath' && normalizedLocalPath(item.path) === normalizedLocalPath(filePath)
+  ));
+  if (!artifact) return null;
+  return {
+    sizeBytes: artifact.sizeBytes,
+    modifiedAt: artifact.modifiedAt,
+    delivery: artifact.delivery,
+  };
+}
+
+function renderFinalPreview() {
+  const el = $('finalPreviewPanel');
+  if (!el) return;
+  const filePath = $('finalImagePath')?.value?.trim() || '';
+  if (!filePath) {
+    el.innerHTML = '<div class="empty">回填或填写最终 PNG 后，这里会显示发送前预览。</div>';
+    return;
+  }
+  const meta = latestFinalMetadataForPath(filePath) || preflightMetadataForPath(filePath) || {};
+  const sessionLabel = meta.sessionId || state.latestFinalJob?.session?.sessionId || '-';
+  const sizeLabel = meta.sizeBytes ? formatBytes(meta.sizeBytes) : '-';
+  const deliveryLabel = meta.delivery || '-';
+  const modifiedLabel = formatFileMtime(meta.modifiedAt);
+  el.innerHTML = `
+    <div class="final-preview-card">
+      <img src="${escapeHtml(localImageUrl(filePath))}" alt="最终 PNG 预览">
+      <div class="final-preview-meta">
+        <strong>${escapeHtml(fileNameFromPath(filePath))}</strong>
+        <span>${escapeHtml(sizeLabel)} · ${escapeHtml(deliveryLabel)}</span>
+        <small>Session ${escapeHtml(sessionLabel)}</small>
+        <small>修改时间 ${escapeHtml(modifiedLabel)}</small>
+        <small>${escapeHtml(filePath)}</small>
+      </div>
+    </div>
+  `;
+}
+
+function renderFeishuReadyWorkbench(readiness) {
+  const el = $('feishuReadyWorkbench');
+  if (!el) return;
+  const latest = state.latestFinalJob || {};
+  if (!latest.found && !readiness.finalImagePath) {
+    el.innerHTML = '<div class="empty">高清导出完成后，这里会汇总可发送状态。</div>';
+    return;
+  }
+  const duplicate = readiness.duplicateSend;
+  const tone = duplicate ? 'blocked' : readiness.ready ? 'ready' : 'running';
+  const title = duplicate ? '当前成品已发送过' : readiness.ready ? '可发送工作台已就绪' : '等待补齐发送条件';
+  const recommendedTarget = activeFeishuTarget()
+    ? readiness.targetLabel
+    : newestFeishuTarget()
+      ? feishuTargetLabel({ ...newestFeishuTarget(), source: 'body' })
+      : readiness.targetLabel;
+  const detail = duplicate
+    ? `上次发送 ${formatLocalDateTime(duplicate.createdAt)}`
+    : readiness.ready
+      ? `${readiness.targetLabel} · ${fileNameFromPath(readiness.finalImagePath)}`
+      : `${readiness.targetReady ? '目标已就绪' : '缺少飞书目标'} · ${readiness.finalReady ? '成品已就绪' : '缺少 final.png'}`;
+  el.innerHTML = `
+    <div class="job-status ${tone}">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>推荐目标</strong><span>${escapeHtml(recommendedTarget)}</span></div>
+      <div><strong>最终 PNG</strong><span>${escapeHtml(readiness.finalImagePath || '-')}</span></div>
+      <div><strong>历史状态</strong><span>${escapeHtml(duplicate ? '已发送过，默认阻断重复投递' : '未发现重复发送')}</span></div>
+      <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+    </div>
+  `;
 }
 
 function renderFeishuReadiness() {
@@ -1966,18 +2109,40 @@ function renderFeishuReadiness() {
   ].filter(Boolean);
   el.innerHTML = `
     <div class="target-dot ${readiness.ready ? 'ok' : 'warn'}"></div>
-    <span>${readiness.ready ? '发送条件已具备' : '发送条件未齐'}</span>
-    <small>${escapeHtml(readiness.ready ? `${readiness.targetLabel} · ${fileNameFromPath(readiness.finalImagePath)}` : missing.join('；'))}</small>
+    <span>${readiness.duplicateSend ? '当前成品已发送过' : readiness.ready ? '发送条件已具备' : '发送条件未齐'}</span>
+    <small>${escapeHtml(readiness.duplicateSend ? `上次发送 ${formatLocalDateTime(readiness.duplicateSend.createdAt)}` : readiness.ready ? `${readiness.targetLabel} · ${fileNameFromPath(readiness.finalImagePath)}` : missing.join('；'))}</small>
   `;
   const sendButton = $('sendFeishuBtn');
   if (sendButton) {
     sendButton.disabled = !readiness.ready;
-    sendButton.title = readiness.ready ? '发送当前 final.png 到飞书目标' : missing.join('；');
+    sendButton.title = readiness.duplicateSend ? '当前 target + final.png 已发送过' : readiness.ready ? '发送当前 final.png 到飞书目标' : missing.join('；');
   }
+  const resendButton = $('resendFeishuBtn');
+  if (resendButton) {
+    resendButton.hidden = !readiness.duplicateSend;
+    resendButton.disabled = !readiness.duplicateSend;
+  }
+  renderFinalPreview();
+  renderFeishuReadyWorkbench(readiness);
   return readiness;
 }
 
 function renderFeishuReadinessBlock(readiness) {
+  if (readiness.duplicateSend) {
+    setMessage('feishuResults', `
+      <div class="job-status blocked">
+        <strong>已阻止重复发送</strong>
+        <span>${escapeHtml(formatLocalDateTime(readiness.duplicateSend.createdAt))}</span>
+      </div>
+      <div class="issue warn"><b>duplicate_send</b>同一飞书目标已发送过当前 final.png；需要人工确认时请点“再次发送”。</div>
+      <div class="artifact-list">
+        <div><strong>Target</strong><span>${escapeHtml(readiness.targetLabel)}</span></div>
+        <div><strong>final.png</strong><span>${escapeHtml(readiness.finalImagePath || '-')}</span></div>
+        <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
+      </div>
+    `, 'html');
+    return;
+  }
   const missing = [
     readiness.targetReady ? '' : '缺少飞书目标',
     readiness.finalReady ? '' : '缺少 final.png 路径',
@@ -2073,6 +2238,47 @@ function sendHistoryImageLabel(record) {
   ].filter(Boolean).join(' · ') || '-';
 }
 
+function sendHistoryAuditSummary(record) {
+  const ids = Array.isArray(record?.messageIds) && record.messageIds.length
+    ? record.messageIds.join(', ')
+    : '-';
+  return [
+    `状态: ${record?.status || '-'}`,
+    `时间: ${formatLocalDateTime(record?.createdAt)}`,
+    `目标: ${sendHistoryTargetLabel(record)}`,
+    `文件: ${record?.finalImage?.fileName || fileNameFromPath(record?.finalImage?.path || '')}`,
+    `大小: ${formatBytes(record?.finalImage?.sizeBytes)}`,
+    `投递: ${record?.finalImage?.delivery || '-'}`,
+    `消息数: ${record?.messageCount ?? '-'}`,
+    `消息ID: ${ids}`,
+    `PSD: ${record?.psdDelivery || 'local_only'}`,
+    `路径: ${record?.finalImage?.path || '-'}`,
+  ].join('\n');
+}
+
+function renderSendHistoryDetails(record) {
+  if (!record || state.expandedSendHistoryId !== record.id) return '';
+  const messages = Array.isArray(record.messages) && record.messages.length
+    ? record.messages.map((message) => `
+      <div><strong>${escapeHtml(message.type || 'message')}</strong><span>${escapeHtml(message.messageId || '-')} · ${escapeHtml(message.createTime || '-')}</span></div>
+    `).join('')
+    : `<div><strong>messageIds</strong><span>${escapeHtml((record.messageIds || []).join(', ') || '-')}</span></div>`;
+  return `
+    <div class="send-history-detail">
+      <div class="artifact-list">
+        <div><strong>Target</strong><span>${escapeHtml(sendHistoryTargetLabel(record))}</span></div>
+        <div><strong>Sent At</strong><span>${escapeHtml(formatLocalDateTime(record.createdAt))}</span></div>
+        <div><strong>final.png</strong><span>${escapeHtml(record.finalImage?.path || '-')}</span></div>
+        <div><strong>Delivery</strong><span>${escapeHtml(record.finalImage?.delivery || '-')}</span></div>
+        <div><strong>Messages</strong><span>${escapeHtml(record.messageCount ?? '-')}</span></div>
+        ${messages}
+        <div><strong>PSD</strong><span>${escapeHtml(record.psdDelivery || 'local_only')}</span></div>
+      </div>
+      <button type="button" class="secondary small" data-feishu-history-action="copy-audit" data-id="${escapeHtml(record.id)}">复制审计摘要</button>
+    </div>
+  `;
+}
+
 function targetFromSendHistory(record) {
   const target = record?.target || {};
   if (!target.value || (target.type !== 'chat' && target.type !== 'user')) return null;
@@ -2124,10 +2330,12 @@ function renderFeishuSendHistory() {
         <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0} · PSD ${record.psdDelivery || 'local_only'}` : `${record.error || '未知错误'}${findings}`)}</small>
         ${canReuse ? `
           <div class="button-row stretch send-history-actions">
+            <button type="button" class="secondary small" data-feishu-history-action="toggle-detail" data-id="${escapeHtml(record.id)}">${state.expandedSendHistoryId === record.id ? '收起详情' : '展开详情'}</button>
             <button type="button" class="secondary small" data-feishu-history-action="reuse-target" data-id="${escapeHtml(record.id)}">复用目标</button>
             <button type="button" class="secondary small" data-feishu-history-action="reuse-preflight" data-id="${escapeHtml(record.id)}">复用并预检</button>
           </div>
         ` : ''}
+        ${renderSendHistoryDetails(record)}
       </div>
     `;
   }).join('');
@@ -2137,6 +2345,7 @@ async function refreshFeishuSendHistory() {
   const payload = await api('/api/feishu/send-history');
   state.feishuSendHistory = Array.isArray(payload.history) ? payload.history : [];
   renderFeishuSendHistory();
+  renderFeishuReadiness();
   return state.feishuSendHistory;
 }
 
@@ -2278,12 +2487,13 @@ function renderJobStatus(payload, label = 'Photoshop job') {
   `, 'html');
 }
 
-function feishuPayload() {
+function feishuPayload(options = {}) {
   return {
     chatId: $('feishuChatId').value.trim(),
     userId: $('feishuUserId').value.trim(),
     text: 'PS 自动化任务已完成，以下为最终 PNG 成品。PSD 已保存在本地，不随飞书发送。',
     imagePath: $('finalImagePath').value.trim(),
+    ...(options.forceResend ? { forceResend: true } : {}),
   };
 }
 
@@ -2292,12 +2502,15 @@ function renderFeishuPreflight(preflight) {
   const artifacts = (preflight.artifacts || []).map((item) => `
     <div>
       <strong>${escapeHtml(item.key)}</strong>
-      <span>${escapeHtml(item.path || '-')} · ${item.exists ? '存在' : '未找到'}${item.required ? ' · 必填' : ''}${item.delivery ? ` · ${escapeHtml(item.delivery)}` : ''}</span>
+      <span>${escapeHtml(item.path || '-')} · ${item.exists ? '存在' : '未找到'}${item.required ? ' · 必填' : ''}${item.sizeBytes ? ` · ${escapeHtml(formatBytes(item.sizeBytes))}` : ''}${item.delivery ? ` · ${escapeHtml(item.delivery)}` : ''}</span>
     </div>
   `).join('');
   const findings = (preflight.findings || []).map((item) => (
     `<div class="issue err"><b>${escapeHtml(item.code)}</b>${escapeHtml(item.message)}</div>`
   )).join('');
+  const duplicate = preflight.duplicateSend
+    ? `<div class="issue warn"><b>duplicate_send</b>该目标已在 ${escapeHtml(formatLocalDateTime(preflight.duplicateSend.sentAt || preflight.duplicateSend.createdAt))} 发送过当前 final.png。</div>`
+    : '';
   setMessage('feishuResults', `
     <div class="job-status ${preflight.status === 'ready' ? 'ready' : 'blocked'}">
       <strong>飞书发送预检</strong>
@@ -2307,6 +2520,7 @@ function renderFeishuPreflight(preflight) {
       <div><dt>Target</dt><dd>${escapeHtml(target)}</dd></div>
     </dl>
     ${findings}
+    ${duplicate}
     <div class="artifact-list">${artifacts}</div>
   `, 'html');
 }
@@ -2392,13 +2606,15 @@ async function preflightFeishu() {
     method: 'POST',
     body: JSON.stringify(feishuPayload()),
   });
+  state.lastFeishuPreflight = payload.preflight || null;
   renderFeishuPreflight(payload.preflight);
+  renderFeishuReadiness();
   return payload.preflight;
 }
 
-async function sendFeishuFinal() {
+async function sendFeishuFinal(options = {}) {
   const readiness = renderFeishuReadiness();
-  if (!readiness.ready) {
+  if (!readiness.ready && !(options.forceResend && readiness.duplicateSend)) {
     renderFeishuReadinessBlock(readiness);
     return;
   }
@@ -2411,7 +2627,7 @@ async function sendFeishuFinal() {
     renderFeishuProgress('正在发送 PNG 成品', feishuTargetLabel(preflight.target));
     const payload = await api('/api/feishu/send-final', {
       method: 'POST',
-      body: JSON.stringify(feishuPayload()),
+      body: JSON.stringify(feishuPayload(options)),
     });
     renderFeishuSendReceipt(payload);
     await refreshFeishuSendHistory().catch(() => {});
@@ -2465,7 +2681,14 @@ async function pollJobStatus(sessionId, targetStatuses, label) {
     if (token !== state.jobPollToken) return payload;
     renderJobStatus(payload, label);
     const status = payload.jobState?.result?.status || payload.jobState?.status || payload.session?.status;
-    if (targets.has(status) || status === 'failed' || status === 'error') return payload;
+    if (targets.has(status) || status === 'failed' || status === 'error') {
+      if (status === 'final_exported') {
+        await refreshLatestFinalJob({ force: true, silent: true }).catch(() => {});
+        await refreshFeishuTargets().catch(() => {});
+        renderFeishuReadiness();
+      }
+      return payload;
+    }
     await wait(1500);
   }
   const payload = await fetchJobStatus(sessionId);
@@ -2758,7 +2981,18 @@ $('feishuSendHistory').addEventListener('click', async (event) => {
   const record = state.feishuSendHistory.find((item) => item.id === button.dataset.id);
   if (!record) return;
   try {
-    const includeImage = button.dataset.feishuHistoryAction === 'reuse-preflight';
+    const action = button.dataset.feishuHistoryAction || '';
+    if (action === 'toggle-detail') {
+      state.expandedSendHistoryId = state.expandedSendHistoryId === record.id ? '' : record.id;
+      renderFeishuSendHistory();
+      return;
+    }
+    if (action === 'copy-audit') {
+      await navigator.clipboard.writeText(sendHistoryAuditSummary(record));
+      setMessage('feishuResults', '已复制发送审计摘要。');
+      return;
+    }
+    const includeImage = action === 'reuse-preflight';
     fillFeishuFromHistoryRecord(record, { includeImage });
     if (includeImage) await preflightFeishu();
   } catch (error) {
@@ -2792,6 +3026,10 @@ $('sendFeishuBtn').addEventListener('click', async () => {
   await sendFeishuFinal();
 });
 
+$('resendFeishuBtn').addEventListener('click', async () => {
+  await sendFeishuFinal({ forceResend: true });
+});
+
 applyInitialDefaults(await loadLocalDefaults());
 setSourceCollapsed(true);
 renderSlots();
@@ -2807,6 +3045,7 @@ renderFeishuSendHistory();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));
+await refreshLatestFinalJob({ silent: true }).catch(() => {});
 if ($('manifestPath').value.trim()) {
   await loadManifest().catch((error) => setMessage('designResults', error.message));
 } else {

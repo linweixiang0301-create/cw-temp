@@ -98,6 +98,12 @@ export type FeishuSendRecord = {
     delivery?: string | null;
   };
   messageCount?: number | null;
+  messageIds?: string[];
+  messages?: Array<{
+    messageId?: string | null;
+    type?: string | null;
+    createTime?: string | null;
+  }>;
   preflightStatus?: string | null;
   error?: string | null;
   findings?: Array<{ code?: string; message?: string }>;
@@ -360,6 +366,8 @@ export function addFeishuSendRecord(input: Omit<FeishuSendRecord, 'id' | 'create
     target: input.target || null,
     finalImage: input.finalImage || { path: null },
     messageCount: input.messageCount ?? null,
+    messageIds: Array.isArray(input.messageIds) ? input.messageIds : [],
+    messages: Array.isArray(input.messages) ? input.messages : [],
     preflightStatus: input.preflightStatus ?? null,
     error: input.error ?? null,
     findings: Array.isArray(input.findings) ? input.findings : [],

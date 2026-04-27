@@ -258,12 +258,15 @@
             <input id="finalFilePath" placeholder="/path/to/editable.psd" readonly>
           </label>
           <div id="latestFinalStatus" class="target-status"></div>
+          <div id="finalPreviewPanel" class="final-preview-panel"></div>
           <div id="feishuReadinessStatus" class="target-status"></div>
+          <div id="feishuReadyWorkbench" class="message-box dark result-log" data-label="可发送工作台"></div>
           <div class="button-row stretch feishu-actions">
             <button id="backfillLatestFinalBtn" type="button" class="secondary">回填最近成品</button>
             <button id="preflightFeishuBtn" type="button" class="secondary">发送前预检</button>
             <button id="loadRecentAndSendBtn" type="button" class="secondary">载入最近并发送</button>
             <button id="sendFeishuBtn" type="button" class="secondary">发送 PNG 成品</button>
+            <button id="resendFeishuBtn" type="button" class="danger" hidden>再次发送</button>
           </div>
           <div id="feishuResults" class="message-box dark result-log" data-label="发送回执"></div>
           <div class="send-history-head">
@@ -275,6 +278,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=feishu-send-closure" type="module"></script>
+    <script src="/app.js?v=feishu-next-phase" type="module"></script>
   </body>
 </html>

@@ -129,3 +129,29 @@
 - 已推送实现到远端 main：`18ee54b3d7ac137ae42f0f7f14ba27c24fe94694`；本回顾验收记录随后随任务文档提交同步。
 - 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3598` 的 `/api/status` 和 `/api/feishu/send-history` 均正常。
 - 本地服务已恢复在 `http://127.0.0.1:3498`，当前运行态保留 1 个真实飞书目标和 1 条 `sent` 发送历史。
+
+# 2026-04-28 任务 — 飞书输出安全与跨模板复用增强
+
+## 目标
+- 完成下阶段全部优化：防误发与重复发送保护、最终 PNG 预览、发送历史详情、job 完成可发送工作台、跨模板映射历史复用。
+- 保持真实数据原则：所有状态来自真实本地文件、真实发送历史、真实 manifest，不使用 mock。
+- 保持外发边界：默认只发送最终 PNG；PSD 只展示本地路径，不外发。
+
+## 计划
+- [x] 增加服务端重复发送检测，同一目标 + 同一 `final.png` 已成功发送时默认阻断。
+- [x] UI 展示已发送过状态，并提供用户明确触发的“再次发送”入口。
+- [x] 在飞书输出区展示当前最终 PNG 预览、文件名、大小、修改时间、session 和投递方式。
+- [x] 扩展发送历史审计详情，记录并展示飞书 message ids，支持展开详情和复制审计摘要。
+- [x] Job `final_exported` 后自动刷新飞书工作台，提示最近目标、最终 PNG 和可发送状态。
+- [x] 为跨模板映射建议支持复用历史 confirmed mapping，减少重复选择。
+- [x] 运行类型检查、脚本检查、真实接口验证和浏览器 UI 验证。
+- [ ] 远端冷启动回归并推送 GitHub。
+
+## 回顾
+- `/api/feishu/preflight-final` 现在返回 `fileName`、`sizeBytes`、`modifiedAt`、`delivery` 和 `duplicateSend`。
+- `/api/feishu/send-final` 默认拦截同一目标 + 同一 `final.png` 的重复发送，验证返回 HTTP `409`；未向飞书群新增消息，群内最新仍是 `2026-04-28 02:16` 的上一轮 text + image。
+- 发送成功回执会记录 `messageIds` 与 `messages`，后续真实发送会在审计详情中展示飞书 message id；旧历史没有该字段时显示 `-`。
+- UI 已新增最终 PNG 预览、可发送工作台、重复发送提示、再次发送按钮、发送历史详情、审计摘要复制入口。
+- 页面自动回填最近 `final.png`，浏览器验收显示 `final.png` 预览为 `1.8 MB · image_message`，session `photoshop-be946f18-7e54-497c-9548-483d2ea4c85b`，修改时间 `2026/4/28 00:41:33`。
+- 跨模板验证仍使用真实 preset / manifest；当前真实派生记录可为 `图2 -> 术前图` 的 image/transform 映射提供历史复用预选。
+- `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
