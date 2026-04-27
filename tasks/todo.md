@@ -171,7 +171,7 @@
 - [x] 增加真实回归检查 API：检查服务状态、最近 final.png、图片预览、飞书目标、重复发送、发送历史和 PSD local-only 边界。
 - [x] 在 UI 中新增 Artifact Center、审计导出、安全复跑和回归检查面板。
 - [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证；验证时不执行 `forceResend`，不发送新飞书消息，不更新 lark-cli。
-- [ ] 远端冷启动回归并推送 GitHub。
+- [x] 远端冷启动回归并推送 GitHub。
 
 ## 回顾
 - 新增 `/api/jobs/latest-artifact-center`、`/api/jobs/:sessionId/artifact-center`、`/api/jobs/:sessionId/safe-rerun`、`/api/feishu/send-history/export`、`/api/regression/feishu-output`。
@@ -182,3 +182,5 @@
 - 浏览器验证通过：桌面 1440x1200 与移动 390x844 均显示 Artifact Center，安全预检与回归检查按钮可用，重新生成 final.png 对历史 session 为 disabled，控制台无 error，无横向溢出。
 - 验证后 `/api/feishu/send-history` 仍为 2 条：`failed` duplicate guard 审计 + 原始 `sent` 记录，没有新增飞书消息。
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
+- 已推送远端 main：`23925dae170bd09d43e19aaf52bf967316daa858`。
+- 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、关键节点 `rg` 检查、备用端口 `3601` 的 `/api/status`、`/api/jobs/latest-artifact-center`、`/api/feishu/send-history/export`、`/api/regression/feishu-output` 和 `/favicon.ico` smoke 均正常。
