@@ -7,6 +7,7 @@ const state = {
   presets: [],
   derivedTargets: [],
   feishuTargets: [],
+  feishuSendHistory: [],
   latestFinalJob: null,
   lastAutoFinalImagePath: '',
   presetCompatibility: [],
@@ -105,6 +106,7 @@ function renderStatus(payload) {
   state.presets = Array.isArray(payload.presets) ? payload.presets : [];
   state.derivedTargets = Array.isArray(payload.derivedTargets) ? payload.derivedTargets : [];
   state.feishuTargets = Array.isArray(payload.feishuTargets) ? payload.feishuTargets : [];
+  state.feishuSendHistory = Array.isArray(payload.feishuSendHistory) ? payload.feishuSendHistory : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -128,6 +130,7 @@ function renderStatus(payload) {
   renderDerivedTargets();
   renderFeishuTargets();
   renderFeishuReadiness();
+  renderFeishuSendHistory();
 }
 
 function renderFeishuDefaultStatus(feishu) {
@@ -2045,6 +2048,51 @@ function renderFeishuTargets() {
   `).join('');
 }
 
+function sendHistoryTargetLabel(record) {
+  const target = record?.target;
+  if (!target?.value) return '未选择目标';
+  return `${target.type === 'chat' ? '群聊' : '用户'}:${target.value}${target.source ? ` (${target.source})` : ''}`;
+}
+
+function sendHistoryImageLabel(record) {
+  const image = record?.finalImage || {};
+  return [
+    image.fileName || fileNameFromPath(image.path || ''),
+    image.sizeBytes ? formatBytes(image.sizeBytes) : '',
+    image.delivery || '',
+  ].filter(Boolean).join(' · ') || '-';
+}
+
+function renderFeishuSendHistory() {
+  const el = $('feishuSendHistory');
+  if (!el) return;
+  const history = state.feishuSendHistory || [];
+  if (history.length === 0) {
+    el.innerHTML = '<div class="empty">暂无发送历史。下一次发送或发送失败会记录在这里。</div>';
+    return;
+  }
+  el.innerHTML = history.slice(0, 8).map((record) => {
+    const findings = Array.isArray(record.findings) && record.findings.length
+      ? ` · ${record.findings.map((item) => item.code || item.message || '').filter(Boolean).join('、')}`
+      : '';
+    return `
+      <div class="send-history-card ${escapeHtml(record.status || 'failed')}">
+        <strong>${escapeHtml(record.status === 'sent' ? '已发送' : '发送失败')} · ${escapeHtml(formatLocalDateTime(record.createdAt))}</strong>
+        <span>${escapeHtml(sendHistoryTargetLabel(record))}</span>
+        <small>${escapeHtml(sendHistoryImageLabel(record))}</small>
+        <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0}` : `${record.error || '未知错误'}${findings}`)}</small>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshFeishuSendHistory() {
+  const payload = await api('/api/feishu/send-history');
+  state.feishuSendHistory = Array.isArray(payload.history) ? payload.history : [];
+  renderFeishuSendHistory();
+  return state.feishuSendHistory;
+}
+
 async function refreshFeishuTargets() {
   const payload = await api('/api/feishu/targets');
   state.feishuTargets = Array.isArray(payload.targets) ? payload.targets : [];
@@ -2316,8 +2364,10 @@ async function sendFeishuFinal() {
       body: JSON.stringify(feishuPayload()),
     });
     renderFeishuSendReceipt(payload);
+    await refreshFeishuSendHistory().catch(() => {});
   } catch (error) {
     renderFeishuSendError(error);
+    await refreshFeishuSendHistory().catch(() => {});
   } finally {
     setFeishuBusy(false);
   }
@@ -2613,6 +2663,15 @@ $('feishuTargetList').addEventListener('click', async (event) => {
   }
 });
 
+$('refreshSendHistoryBtn').addEventListener('click', async () => {
+  try {
+    await refreshFeishuSendHistory();
+    setMessage('feishuResults', '已刷新本地发送历史。');
+  } catch (error) {
+    setMessage('feishuResults', error.payload || error.message);
+  }
+});
+
 $('preflightFeishuBtn').addEventListener('click', async () => {
   try {
     setMessage('feishuResults', '正在进行发送前预检...');
@@ -2646,6 +2705,7 @@ renderPresetList();
 renderDerivedTargets();
 renderFeishuTargets();
 renderFeishuReadiness();
+renderFeishuSendHistory();
 renderManifestCandidateList();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));

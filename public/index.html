@@ -265,10 +265,15 @@
             <button id="sendFeishuBtn" type="button" class="secondary">发送 PNG 成品</button>
           </div>
           <div id="feishuResults" class="message-box dark result-log" data-label="发送回执"></div>
+          <div class="send-history-head">
+            <h3>发送历史</h3>
+            <button id="refreshSendHistoryBtn" type="button" class="secondary small">刷新</button>
+          </div>
+          <div id="feishuSendHistory" class="feishu-send-history"></div>
         </section>
       </aside>
     </main>
 
-    <script src="/app.js?v=feishu-readiness" type="module"></script>
+    <script src="/app.js?v=feishu-send-history" type="module"></script>
   </body>
 </html>

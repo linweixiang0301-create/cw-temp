@@ -82,18 +82,48 @@ export type FeishuTargetRecord = {
   lastUsedAt?: string | null;
 };
 
+export type FeishuSendRecord = {
+  id: string;
+  createdAt: string;
+  status: 'sent' | 'failed';
+  target: {
+    type: 'chat' | 'user' | null;
+    value: string | null;
+    source?: string | null;
+  } | null;
+  finalImage: {
+    path: string | null;
+    fileName?: string | null;
+    sizeBytes?: number | null;
+    delivery?: string | null;
+  };
+  messageCount?: number | null;
+  preflightStatus?: string | null;
+  error?: string | null;
+  findings?: Array<{ code?: string; message?: string }>;
+  psdDelivery: 'local_only';
+};
+
 type StateShape = {
   downloads: DownloadRecord[];
   jobs: ConsoleJobRecord[];
   presets: ActionPresetRecord[];
   derivedTargets: DerivedTargetRecord[];
   feishuTargets: FeishuTargetRecord[];
+  feishuSendHistory: FeishuSendRecord[];
 };
 
 const STATE_PATH = runtimePath('console-state.json');
 
 function emptyState(): StateShape {
-  return { downloads: [], jobs: [], presets: [], derivedTargets: [], feishuTargets: [] };
+  return {
+    downloads: [],
+    jobs: [],
+    presets: [],
+    derivedTargets: [],
+    feishuTargets: [],
+    feishuSendHistory: [],
+  };
 }
 
 function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape {
@@ -103,6 +133,7 @@ function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape
     presets: Array.isArray(raw?.presets) ? raw.presets : [],
     derivedTargets: Array.isArray(raw?.derivedTargets) ? raw.derivedTargets : [],
     feishuTargets: Array.isArray(raw?.feishuTargets) ? raw.feishuTargets : [],
+    feishuSendHistory: Array.isArray(raw?.feishuSendHistory) ? raw.feishuSendHistory : [],
   };
 }
 
@@ -312,4 +343,29 @@ export function deleteFeishuTarget(id: string): boolean {
   state.feishuTargets = state.feishuTargets.filter((target) => target.id !== id);
   writeState(state);
   return state.feishuTargets.length !== before;
+}
+
+export function listFeishuSendHistory(): FeishuSendRecord[] {
+  return readState().feishuSendHistory.slice(0, 50);
+}
+
+export function addFeishuSendRecord(input: Omit<FeishuSendRecord, 'id' | 'createdAt'> & {
+  createdAt?: string;
+}): FeishuSendRecord {
+  const state = readState();
+  const record: FeishuSendRecord = {
+    id: crypto.randomUUID(),
+    createdAt: input.createdAt || new Date().toISOString(),
+    status: input.status,
+    target: input.target || null,
+    finalImage: input.finalImage || { path: null },
+    messageCount: input.messageCount ?? null,
+    preflightStatus: input.preflightStatus ?? null,
+    error: input.error ?? null,
+    findings: Array.isArray(input.findings) ? input.findings : [],
+    psdDelivery: 'local_only',
+  };
+  state.feishuSendHistory = [record, ...state.feishuSendHistory].slice(0, 100);
+  writeState(state);
+  return record;
 }

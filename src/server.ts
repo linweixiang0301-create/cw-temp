@@ -14,9 +14,11 @@ import {
   preflightPhotoshopJob,
 } from './photoshop-service.js';
 import {
+  addFeishuSendRecord,
   deleteDerivedTarget,
   deleteFeishuTarget,
   deletePreset,
+  listFeishuSendHistory,
   listFeishuTargets,
   listDerivedTargets,
   listDownloads,
@@ -225,6 +227,78 @@ function isFeishuTargetType(value: string): value is 'chat' | 'user' {
 function feishuTargetLooksValid(type: 'chat' | 'user', value: string): boolean {
   if (type === 'chat') return /^oc_[A-Za-z0-9_-]+$/.test(value);
   return /^ou_[A-Za-z0-9_-]+$/.test(value);
+}
+
+function feishuSendRecordFromPayload(payload: Record<string, unknown>): Parameters<typeof addFeishuSendRecord>[0] {
+  const receipt = (payload.receipt || {}) as Record<string, any>;
+  const finalImage = (receipt.finalImage || {}) as Record<string, any>;
+  const target = (receipt.target || null) as Record<string, any> | null;
+  const preflight = (payload.preflight || {}) as Record<string, any>;
+  return {
+    status: 'sent',
+    createdAt: String(receipt.sentAt || new Date().toISOString()),
+    target: target
+      ? {
+          type: isFeishuTargetType(String(target.type || '')) ? target.type : null,
+          value: target.value ? String(target.value) : null,
+          source: target.source ? String(target.source) : null,
+        }
+      : null,
+    finalImage: {
+      path: finalImage.path ? String(finalImage.path) : null,
+      fileName: finalImage.fileName ? String(finalImage.fileName) : null,
+      sizeBytes: typeof finalImage.sizeBytes === 'number' ? finalImage.sizeBytes : null,
+      delivery: finalImage.delivery ? String(finalImage.delivery) : null,
+    },
+    messageCount: typeof receipt.messageCount === 'number' ? receipt.messageCount : null,
+    preflightStatus: preflight.status ? String(preflight.status) : null,
+    error: null,
+    findings: [],
+    psdDelivery: 'local_only',
+  };
+}
+
+function feishuSendRecordFromError(
+  error: unknown,
+  body: Record<string, unknown> = {},
+): Parameters<typeof addFeishuSendRecord>[0] {
+  const details = errorDetails(error) as Record<string, any> | undefined;
+  const target = (details?.target || null) as Record<string, any> | null;
+  const bodyChatId = String(body.chatId || '').trim();
+  const bodyUserId = String(body.userId || '').trim();
+  const fallbackTarget = bodyChatId
+    ? { type: 'chat' as const, value: bodyChatId, source: 'body' }
+    : bodyUserId
+      ? { type: 'user' as const, value: bodyUserId, source: 'body' }
+      : null;
+  const artifact = Array.isArray(details?.artifacts)
+    ? details.artifacts.find((item: Record<string, any>) => item?.key === 'imagePath')
+    : null;
+  const imagePath = artifact?.path ? String(artifact.path) : String(body.imagePath || '').trim();
+  return {
+    status: 'failed',
+    target: target
+      ? {
+          type: isFeishuTargetType(String(target.type || '')) ? target.type : null,
+          value: target.value ? String(target.value) : null,
+          source: target.source ? String(target.source) : null,
+        }
+      : fallbackTarget,
+    finalImage: {
+      path: imagePath || null,
+      fileName: imagePath ? path.basename(imagePath) : null,
+      sizeBytes: typeof artifact?.sizeBytes === 'number' ? artifact.sizeBytes : null,
+      delivery: artifact?.delivery ? String(artifact.delivery) : null,
+    },
+    messageCount: 0,
+    preflightStatus: details?.status ? String(details.status) : null,
+    error: safeError(error),
+    findings: Array.isArray(details?.findings) ? details.findings.map((item: Record<string, any>) => ({
+      code: item?.code ? String(item.code) : undefined,
+      message: item?.message ? String(item.message) : undefined,
+    })) : [],
+    psdDelivery: 'local_only',
+  };
 }
 
 function mappingKey(slotKey: string, capability: SlotCapability): string {
@@ -465,6 +539,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         presets: listPresets(),
         derivedTargets: listDerivedTargets(),
         feishuTargets: listFeishuTargets(),
+        feishuSendHistory: listFeishuSendHistory(),
       });
       return true;
     }
@@ -481,6 +556,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
     if (req.method === 'GET' && url.pathname === '/api/feishu/targets') {
       sendJson(res, 200, { ok: true, targets: listFeishuTargets() });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/feishu/send-history') {
+      sendJson(res, 200, { ok: true, history: listFeishuSendHistory() });
       return true;
     }
 
@@ -845,14 +925,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
 
     if (req.method === 'POST' && url.pathname === '/api/feishu/send-final') {
-      const payload = await sendFinalToFeishu(await readJsonBody(req));
-      const target = (payload.receipt as { target?: { type?: string; value?: string } } | undefined)?.target;
-      const targetType = String(target?.type || '').trim();
-      const targetValue = String(target?.value || '').trim();
-      if (isFeishuTargetType(targetType) && targetValue) {
-        markFeishuTargetUsed({ type: targetType, value: targetValue });
+      const body = await readJsonBody(req);
+      try {
+        const payload = await sendFinalToFeishu(body);
+        const target = (payload.receipt as { target?: { type?: string; value?: string } } | undefined)?.target;
+        const targetType = String(target?.type || '').trim();
+        const targetValue = String(target?.value || '').trim();
+        if (isFeishuTargetType(targetType) && targetValue) {
+          markFeishuTargetUsed({ type: targetType, value: targetValue });
+        }
+        addFeishuSendRecord(feishuSendRecordFromPayload(payload));
+        sendJson(res, 200, payload);
+      } catch (error) {
+        addFeishuSendRecord(feishuSendRecordFromError(error, body));
+        throw error;
       }
-      sendJson(res, 200, payload);
       return true;
     }
 

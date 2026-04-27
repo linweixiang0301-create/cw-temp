@@ -64,6 +64,7 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `GET /api/feishu/targets`
 - `POST /api/feishu/targets`
 - `DELETE /api/feishu/targets/:id`
+- `GET /api/feishu/send-history`
 - `POST /api/feishu/preflight-final`
 - `POST /api/feishu/send-final`
 
@@ -81,3 +82,5 @@ export PS_AUTOMATION_FEISHU_USER_ID=ou_xxx
 发送最终成品时只发送文本摘要和最终 PNG；可编辑 PSD 保存在本机，不默认外发。
 
 控制台可以把手动填写的真实 Chat/User 目标保存为本地最近目标，数据只写入本机运行时 state，不进入仓库。
+
+每次调用发送接口都会写入本地发送历史：成功记录目标、最终 PNG、投递方式和消息数量；失败记录错误与预检 findings。

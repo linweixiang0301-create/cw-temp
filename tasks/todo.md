@@ -73,3 +73,31 @@
   - `git diff --check` 通过。
   - 本地服务可读取新增 `feishuReadinessStatus` 与 `app.js?v=feishu-readiness`。
   - 当前有最近 `final.png`，但无飞书目标，发送预检仍以 `feishu_target_missing` 阻断；未发送飞书消息。
+
+# 2026-04-28 任务 — 飞书发送历史与审计记录
+
+## 目标
+- 记录每次 `/api/feishu/send-final` 的真实发送尝试。
+- 成功记录目标、`final.png` 路径、大小、投递方式、消息数量、时间。
+- 失败记录预检/发送错误、目标、`final.png` 路径和 findings，方便排查。
+- 审计数据只保存在本机运行时 state，不写入仓库。
+
+## 计划
+- [x] 扩展本地 console state，增加飞书发送历史。
+- [x] 发送成功/失败时写入审计记录。
+- [x] 新增发送历史读取 API。
+- [x] 在飞书输出区展示最近发送历史。
+- [x] 运行类型检查、脚本检查、临时运行时接口验证。
+
+## 回顾
+- 已新增本地 `feishuSendHistory` 状态，审计记录只写入运行时 state，不进入仓库。
+- `/api/status` 会返回最近发送历史；新增 `/api/feishu/send-history`。
+- `/api/feishu/send-final` 成功时记录目标、最终 PNG、大小、投递方式、消息数量和 `psdDelivery: local_only`。
+- `/api/feishu/send-final` 失败时记录错误、预检状态、findings、目标和最终 PNG 路径。
+- 飞书输出区新增“发送历史”列表和刷新按钮，展示最近 8 条成功/失败记录。
+- 验证结果：
+  - `npm run check` 通过。
+  - `node --check public/app.js` 通过。
+  - `git diff --check` 通过。
+  - 临时运行时验证缺少飞书目标的失败发送返回 400，并写入 1 条 failed 审计记录，`psdDelivery` 为 `local_only`；未发送飞书消息。
+  - 本地服务 `http://127.0.0.1:3498` 已重启到最新代码，`/api/status` 和 `/api/feishu/send-history` 正常。

@@ -1530,6 +1530,67 @@ select:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.send-history-head {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.send-history-head h3 {
+  font-size: 13px;
+}
+
+.feishu-send-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.send-history-card {
+  background: #f8fafc;
+  border: 1px solid #dbe7f7;
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+}
+
+.send-history-card.failed {
+  background: #fff5f5;
+  border-color: #f0b8b8;
+}
+
+.send-history-card.sent {
+  background: #f2fbf7;
+  border-color: #b9ebd0;
+}
+
+.send-history-card strong,
+.send-history-card span,
+.send-history-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.send-history-card strong {
+  color: #102a5f;
+  font-size: 12px;
+}
+
+.send-history-card span {
+  color: #475467;
+  font-size: 11px;
+}
+
+.send-history-card small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
 .compat-card {
   background: #f8fafc;
   border: 1px solid #e6ecf5;
