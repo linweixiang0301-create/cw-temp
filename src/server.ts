@@ -36,6 +36,7 @@ import {
   saveModelRoute,
   savePreset,
   type ActionPresetRecord,
+  type FeishuQualityGateRecord,
   type ModelRouteKey,
   type ModelRouteProvider,
 } from './state.js';
@@ -245,6 +246,39 @@ function feishuTargetLooksValid(type: 'chat' | 'user', value: string): boolean {
   return /^ou_[A-Za-z0-9_-]+$/.test(value);
 }
 
+function maybeRecord(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : null;
+}
+
+function feishuQualityGateFromPayload(value: unknown): FeishuQualityGateRecord | null {
+  const gate = maybeRecord(value);
+  const rawStatus = String(gate?.status || '').trim();
+  if (!gate || !['completed', 'fallback', 'skipped'].includes(rawStatus)) return null;
+  const fallback = maybeRecord(gate.fallback);
+  const usage = maybeRecord(gate.usage);
+  return {
+    status: rawStatus as FeishuQualityGateRecord['status'],
+    checkedAt: gate.checkedAt ? String(gate.checkedAt) : null,
+    model: gate.model ? String(gate.model) : null,
+    selectedRole: gate.selectedRole ? String(gate.selectedRole) : null,
+    apiKeyEnv: gate.apiKeyEnv ? String(gate.apiKeyEnv) : null,
+    routePrimary: gate.routePrimary ? String(gate.routePrimary) : null,
+    routeFallback: gate.routeFallback ? String(gate.routeFallback) : null,
+    durationMs: typeof gate.durationMs === 'number' ? gate.durationMs : null,
+    imagePath: gate.imagePath ? String(gate.imagePath) : null,
+    summaryPreview: previewText(gate.summaryPreview || gate.summary, 600),
+    usage,
+    fallback: fallback
+      ? {
+          mode: fallback.mode ? String(fallback.mode) : null,
+          reason: fallback.reason ? String(fallback.reason) : null,
+          nonBlocking: fallback.nonBlocking !== false,
+        }
+      : null,
+    nonBlocking: gate.nonBlocking !== false,
+  };
+}
+
 function feishuSendRecordFromPayload(payload: Record<string, unknown>): Parameters<typeof addFeishuSendRecord>[0] {
   const receipt = (payload.receipt || {}) as Record<string, any>;
   const finalImage = (receipt.finalImage || {}) as Record<string, any>;
@@ -280,6 +314,7 @@ function feishuSendRecordFromPayload(payload: Record<string, unknown>): Paramete
     preflightStatus: preflight.status ? String(preflight.status) : null,
     error: null,
     findings: [],
+    qualityGate: feishuQualityGateFromPayload(receipt.qualityGate || payload.qualityGate),
     psdDelivery: 'local_only',
   };
 }
@@ -287,6 +322,7 @@ function feishuSendRecordFromPayload(payload: Record<string, unknown>): Paramete
 function feishuSendRecordFromError(
   error: unknown,
   body: Record<string, unknown> = {},
+  qualityGate: FeishuQualityGateRecord | null = null,
 ): Parameters<typeof addFeishuSendRecord>[0] {
   const details = errorDetails(error) as Record<string, any> | undefined;
   const target = (details?.target || null) as Record<string, any> | null;
@@ -325,6 +361,7 @@ function feishuSendRecordFromError(
       code: item?.code ? String(item.code) : undefined,
       message: item?.message ? String(item.message) : undefined,
     })) : [],
+    qualityGate: feishuQualityGateFromPayload(details?.qualityGate || qualityGate),
     psdDelivery: 'local_only',
   };
 }
@@ -564,6 +601,11 @@ async function feishuOutputRegressionPayload(): Promise<Record<string, unknown>>
       message: `${history.length} 条发送审计记录。`,
     },
     {
+      code: 'vision_quality_gate_policy',
+      status: 'ready',
+      message: 'send-final 发送前执行 Vision QA；模型失败写入 manual_review 警告且不阻断 final.png 投递。',
+    },
+    {
       code: 'psd_local_only',
       status: 'ready',
       message: editablePsdPath ? `PSD 仅本地保存：${editablePsdPath}` : '没有 editable PSD 路径，但发送 payload 仍只使用 final.png。',
@@ -584,6 +626,7 @@ async function feishuOutputRegressionPayload(): Promise<Record<string, unknown>>
         noMockData: true,
         psdDelivery: 'local_only',
         sendApiDefault: 'duplicate_guarded',
+        visionQualityGate: 'non_blocking_pre_send',
       },
     },
   };
@@ -728,6 +771,113 @@ function recordModelVisionFallback(body: Record<string, unknown>, error: unknown
     error: safeError(error),
     nonBlocking: true,
   });
+}
+
+function feishuQualityGateFromVisionSuccess(
+  imagePath: string,
+  result: Record<string, unknown>,
+  durationMs: number,
+): FeishuQualityGateRecord {
+  const route = getResolvedModelRoute('vision');
+  const qa = maybeRecord(result.qa) || {};
+  return {
+    status: 'completed',
+    checkedAt: qa.checkedAt ? String(qa.checkedAt) : new Date().toISOString(),
+    model: qa.model ? String(qa.model) : route.primary,
+    selectedRole: qa.selectedRole ? String(qa.selectedRole) : null,
+    apiKeyEnv: qa.apiKeyEnv ? String(qa.apiKeyEnv) : null,
+    routePrimary: route.primary,
+    routeFallback: route.fallback || null,
+    durationMs,
+    imagePath: qa.imagePath ? String(qa.imagePath) : imagePath,
+    summaryPreview: previewText(qa.summary, 600),
+    usage: maybeRecord(qa.usage),
+    fallback: null,
+    nonBlocking: qa.nonBlocking !== false,
+  };
+}
+
+function feishuQualityGateFromVisionFallback(
+  imagePath: string,
+  error: unknown,
+  durationMs: number,
+): FeishuQualityGateRecord {
+  const route = getResolvedModelRoute('vision');
+  return {
+    status: 'fallback',
+    checkedAt: new Date().toISOString(),
+    model: null,
+    selectedRole: null,
+    apiKeyEnv: null,
+    routePrimary: route.primary,
+    routeFallback: route.fallback || null,
+    durationMs,
+    imagePath,
+    summaryPreview: null,
+    usage: null,
+    fallback: {
+      mode: 'manual_review',
+      reason: safeError(error),
+      nonBlocking: true,
+    },
+    nonBlocking: true,
+  };
+}
+
+function feishuImagePathForQualityGate(body: Record<string, unknown>, preflight: Record<string, unknown>): string {
+  const artifacts = Array.isArray(preflight.artifacts) ? preflight.artifacts : [];
+  const imageArtifact = artifacts.find((item) => maybeRecord(item)?.key === 'imagePath');
+  const artifactPath = maybeRecord(imageArtifact)?.path;
+  return normalizeMaybePath(artifactPath || body.imagePath);
+}
+
+async function runFeishuPreSendQualityGate(
+  body: Record<string, unknown>,
+  preflight: Record<string, unknown>,
+): Promise<FeishuQualityGateRecord> {
+  const imagePath = feishuImagePathForQualityGate(body, preflight);
+  if (!imagePath) {
+    return {
+      status: 'skipped',
+      checkedAt: new Date().toISOString(),
+      durationMs: 0,
+      imagePath: null,
+      summaryPreview: '缺少 final.png 路径，发送预检会负责阻断本次发送。',
+      fallback: null,
+      nonBlocking: true,
+    };
+  }
+
+  const startedAt = Date.now();
+  const qaBody = {
+    ...body,
+    imagePath,
+    modelId: String(body.visionQaModelId || '').trim(),
+  };
+  try {
+    const result = await runVisionQualityCheck({
+      imagePath,
+      modelId: String(body.visionQaModelId || '').trim(),
+      prompt: String(body.visionQaPrompt || '').trim(),
+    });
+    const durationMs = Date.now() - startedAt;
+    recordModelVisionSuccess(qaBody, result, durationMs);
+    return feishuQualityGateFromVisionSuccess(imagePath, result, durationMs);
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    recordModelVisionFallback(qaBody, error, durationMs);
+    return feishuQualityGateFromVisionFallback(imagePath, error, durationMs);
+  }
+}
+
+function attachFeishuQualityGateToError(error: unknown, qualityGate: FeishuQualityGateRecord | null): void {
+  if (!qualityGate || !error || typeof error !== 'object') return;
+  const holder = error as { details?: unknown };
+  const details = maybeRecord(holder.details) || {};
+  holder.details = {
+    ...details,
+    qualityGate,
+  };
 }
 
 async function modelRoutingRegressionPayload(): Promise<Record<string, unknown>> {
@@ -1603,14 +1753,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
 
     if (req.method === 'POST' && url.pathname === '/api/feishu/send-final') {
-      const body = await readJsonBody(req);
+      const body = await readJsonBody<Record<string, unknown>>(req);
+      let qualityGate: FeishuQualityGateRecord | null = null;
       try {
         const preflight = addDuplicateSendInfo(await preflightFinalToFeishu(body));
         if ((preflight as { duplicateSend?: unknown }).duplicateSend && !(body as { forceResend?: boolean }).forceResend) {
           throw duplicateSendError(preflight);
         }
+        if (preflight.status === 'ready') {
+          qualityGate = await runFeishuPreSendQualityGate(body, preflight);
+        }
         const payload = await sendFinalToFeishu(body);
         payload.preflight = addDuplicateSendInfo(payload.preflight as Record<string, unknown>);
+        payload.qualityGate = qualityGate;
+        if (payload.receipt && typeof payload.receipt === 'object') {
+          (payload.receipt as Record<string, unknown>).qualityGate = qualityGate;
+        }
         const target = (payload.receipt as { target?: { type?: string; value?: string } } | undefined)?.target;
         const targetType = String(target?.type || '').trim();
         const targetValue = String(target?.value || '').trim();
@@ -1620,7 +1778,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         addFeishuSendRecord(feishuSendRecordFromPayload(payload));
         sendJson(res, 200, payload);
       } catch (error) {
-        addFeishuSendRecord(feishuSendRecordFromError(error, body));
+        attachFeishuQualityGateToError(error, qualityGate);
+        addFeishuSendRecord(feishuSendRecordFromError(error, body, qualityGate));
         throw error;
       }
       return true;

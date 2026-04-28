@@ -82,6 +82,26 @@ export type FeishuTargetRecord = {
   lastUsedAt?: string | null;
 };
 
+export type FeishuQualityGateRecord = {
+  status: 'completed' | 'fallback' | 'skipped';
+  checkedAt?: string | null;
+  model?: string | null;
+  selectedRole?: string | null;
+  apiKeyEnv?: string | null;
+  routePrimary?: string | null;
+  routeFallback?: string | null;
+  durationMs?: number | null;
+  imagePath?: string | null;
+  summaryPreview?: string | null;
+  usage?: Record<string, unknown> | null;
+  fallback?: {
+    mode?: string | null;
+    reason?: string | null;
+    nonBlocking?: boolean;
+  } | null;
+  nonBlocking: boolean;
+};
+
 export type FeishuSendRecord = {
   id: string;
   createdAt: string;
@@ -107,6 +127,7 @@ export type FeishuSendRecord = {
   preflightStatus?: string | null;
   error?: string | null;
   findings?: Array<{ code?: string; message?: string }>;
+  qualityGate?: FeishuQualityGateRecord | null;
   psdDelivery: 'local_only';
 };
 
@@ -442,6 +463,7 @@ export function addFeishuSendRecord(input: Omit<FeishuSendRecord, 'id' | 'create
     preflightStatus: input.preflightStatus ?? null,
     error: input.error ?? null,
     findings: Array.isArray(input.findings) ? input.findings : [],
+    qualityGate: input.qualityGate || null,
     psdDelivery: 'local_only',
   };
   state.feishuSendHistory = [record, ...state.feishuSendHistory].slice(0, 100);

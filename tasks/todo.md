@@ -1,3 +1,68 @@
+# 2026-04-28 任务 — 发送前 Vision QA 门禁与发送审计串联
+
+## 目标
+- `/api/feishu/send-final` 在真实发送 `final.png` 前自动执行 Vision QA。
+- Vision QA 使用现有 vision 路由：优选 `gemini-3-flash-preview`，失败自动 fallback 到 `gpt-5.5`。
+- QA 成功或失败都不阻断飞书发送主链路；两个模型都失败时记录 `manual_review` 警告。
+- 发送回执和发送历史记录 QA 状态、命中模型、耗时和摘要预览。
+- 继续保证：只发送 `final.png`，PSD 仅本地保存，不外发，不记录密钥。
+
+## 计划
+- [x] 确认现有发送、QA、发送历史数据结构，复用已有审计能力。
+- [x] 扩展 `FeishuSendRecord`，为发送记录增加 `qualityGate` 元数据。
+- [x] 在 `/api/feishu/send-final` 预检通过且未命中重复发送拦截后，执行发送前 Vision QA。
+- [x] QA 成功/失败均写入 model usage 审计和飞书发送历史；失败走 `manual_review` 且非阻断。
+- [x] UI 发送回执、失败回执、发送历史详情展示 QA 结果。
+- [x] 运行类型检查、前端语法检查、API 回归与密钥扫描。
+
+## 回顾
+- 已在 `FeishuSendRecord` 中新增 `qualityGate`：
+  - status：`completed` / `fallback` / `skipped`
+  - model、selectedRole、apiKeyEnv、routePrimary、routeFallback、durationMs
+  - imagePath、summaryPreview、usage、fallback、nonBlocking
+  - 只记录环境变量名，不记录密钥值。
+- `/api/feishu/send-final` 新流程：
+  - 先执行真实发送预检。
+  - 命中 duplicate guard 时仍默认阻断，不执行 QA，不新增飞书消息。
+  - 预检 ready 且未被重复发送拦截时，先调用 `runVisionQualityCheck()`。
+  - QA 成功写入 model usage 审计，并随发送 payload / receipt / 发送历史返回。
+  - QA 失败写入 `manual_review` fallback 审计，但不阻断后续 PNG 投递。
+- UI 已展示 QA 结果：
+  - 发送成功回执显示 Vision QA 命中模型、角色、耗时、主备路由和摘要预览。
+  - 发送失败回执会显示已完成的 QA 结果或 manual review 警告。
+  - 发送历史卡片、详情和“复制审计摘要”都包含 QA 信息。
+- README 已补充：
+  - `/api/feishu/send-history/export`
+  - `/api/regression/feishu-output`
+  - send-final 发送前 Vision QA 非阻断策略。
+- 真实验证：
+  - 本地服务已运行在 `http://127.0.0.1:3498`。
+  - 使用当前真实 `final.png` 调用 `/api/models/vision/qa` 成功。
+  - 命中模型：`gemini-3-flash-preview`
+  - 命中角色：`primary`
+  - 耗时约 `14.9s`
+  - 最新 usage 审计：`vision.qa completed`，`apiKeyEnv=GEMINI_FLASH_API_KEY`，`total_tokens=1818`
+- 发送前真实预检：
+  - 当前目标 `chat:oc_6f5a98333a9b01fd35846e88c85a746d`
+  - 当前 `final.png` 大小 `1,852,542 bytes`
+  - 投递方式 `image_message`
+  - 已命中 duplicate guard，因此本轮未再次发送飞书消息。
+- 隔离冷启动回归：
+  - 临时 runtime + 空 provider/env + 备用端口 `3612`
+  - vision ready 为 `false`
+  - `/api/models/vision/qa` 返回 `fallback.manual_review`
+  - `nonBlocking=true`
+  - `/api/regression/model-routing` 返回 `ready`
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/regression/feishu-output` 返回 `ready`
+  - `/api/regression/model-routing` 返回 `ready`
+  - `/app.js` 与 `/styles.css` 均包含 `qualityGate` / `quality-gate-card` 新 UI 节点
+  - 仓库密钥扫描无 `sk-...` 明文
+- 本轮未执行飞书外发，未外发 PSD。
+
 # 2026-04-28 任务 — 模型审计增强与冷启动回归
 
 ## 目标

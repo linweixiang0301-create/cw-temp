@@ -2370,6 +2370,13 @@ function formatBytes(value) {
   return `${size} B`;
 }
 
+function formatDurationMs(value) {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return '-';
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
 function fileNameFromPath(filePath) {
   return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || '-';
 }
@@ -2729,6 +2736,7 @@ function sendHistoryAuditSummary(record) {
   const ids = Array.isArray(record?.messageIds) && record.messageIds.length
     ? record.messageIds.join(', ')
     : '-';
+  const gate = record?.qualityGate || null;
   return [
     `状态: ${record?.status || '-'}`,
     `时间: ${formatLocalDateTime(record?.createdAt)}`,
@@ -2738,6 +2746,7 @@ function sendHistoryAuditSummary(record) {
     `投递: ${record?.finalImage?.delivery || '-'}`,
     `消息数: ${record?.messageCount ?? '-'}`,
     `消息ID: ${ids}`,
+    `Vision QA: ${feishuQualityGateLabel(gate)}`,
     `PSD: ${record?.psdDelivery || 'local_only'}`,
     `路径: ${record?.finalImage?.path || '-'}`,
   ].join('\n');
@@ -2759,8 +2768,10 @@ function renderSendHistoryDetails(record) {
         <div><strong>Delivery</strong><span>${escapeHtml(record.finalImage?.delivery || '-')}</span></div>
         <div><strong>Messages</strong><span>${escapeHtml(record.messageCount ?? '-')}</span></div>
         ${messages}
+        <div><strong>Vision QA</strong><span>${escapeHtml(feishuQualityGateLabel(record.qualityGate))}</span></div>
         <div><strong>PSD</strong><span>${escapeHtml(record.psdDelivery || 'local_only')}</span></div>
       </div>
+      ${renderFeishuQualityGateBlock(record.qualityGate)}
       <button type="button" class="secondary small" data-feishu-history-action="copy-audit" data-id="${escapeHtml(record.id)}">复制审计摘要</button>
     </div>
   `;
@@ -2809,12 +2820,13 @@ function renderFeishuSendHistory() {
       ? ` · ${record.findings.map((item) => item.code || item.message || '').filter(Boolean).join('、')}`
       : '';
     const canReuse = Boolean(targetFromSendHistory(record));
+    const qualityGate = record.qualityGate ? ` · QA ${feishuQualityGateLabel(record.qualityGate)}` : '';
     return `
       <div class="send-history-card ${escapeHtml(record.status || 'failed')}">
         <strong>${escapeHtml(record.status === 'sent' ? '已发送' : '发送失败')} · ${escapeHtml(formatLocalDateTime(record.createdAt))}</strong>
         <span>${escapeHtml(sendHistoryTargetLabel(record))}</span>
         <small>${escapeHtml(sendHistoryImageLabel(record))}</small>
-        <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0} · PSD ${record.psdDelivery || 'local_only'}` : `${record.error || '未知错误'}${findings}`)}</small>
+        <small>${escapeHtml(record.status === 'sent' ? `messages ${record.messageCount || 0} · PSD ${record.psdDelivery || 'local_only'}${qualityGate}` : `${record.error || '未知错误'}${findings}${qualityGate}`)}</small>
         ${canReuse ? `
           <div class="button-row stretch send-history-actions">
             <button type="button" class="secondary small" data-feishu-history-action="toggle-detail" data-id="${escapeHtml(record.id)}">${state.expandedSendHistoryId === record.id ? '收起详情' : '展开详情'}</button>
@@ -3268,9 +3280,56 @@ function renderFeishuProgress(title, detail = '') {
   `, 'html');
 }
 
+function feishuQualityGateLabel(gate) {
+  if (!gate) return '未执行';
+  if (gate.status === 'completed') {
+    return [
+      gate.model || 'vision',
+      gate.selectedRole || '',
+      formatDurationMs(gate.durationMs),
+    ].filter(Boolean).join(' · ');
+  }
+  if (gate.status === 'fallback') {
+    return [
+      gate.fallback?.mode || 'manual_review',
+      formatDurationMs(gate.durationMs),
+      gate.fallback?.reason || '',
+    ].filter(Boolean).join(' · ');
+  }
+  return gate.status || 'skipped';
+}
+
+function renderFeishuQualityGateBlock(gate) {
+  if (!gate) {
+    return `
+      <div class="quality-gate-card skipped">
+        <strong>Vision QA</strong>
+        <span>未执行</span>
+      </div>
+    `;
+  }
+  const summary = gate.summaryPreview
+    ? `<pre>${escapeHtml(gate.summaryPreview)}</pre>`
+    : '';
+  const fallback = gate.fallback?.reason
+    ? `<div class="issue warn"><b>${escapeHtml(gate.fallback.mode || 'manual_review')}</b>${escapeHtml(gate.fallback.reason)}</div>`
+    : '';
+  return `
+    <div class="quality-gate-card ${escapeHtml(gate.status || 'skipped')}">
+      <strong>Vision QA · ${escapeHtml(gate.status || '-')}</strong>
+      <span>${escapeHtml(feishuQualityGateLabel(gate))}</span>
+      <small>${escapeHtml(gate.checkedAt ? formatLocalDateTime(gate.checkedAt) : '-')} · ${escapeHtml(gate.nonBlocking ? '不阻断发送' : '可能阻断')}</small>
+      <small>${escapeHtml([gate.routePrimary || '', gate.routeFallback ? `fallback ${gate.routeFallback}` : '', gate.apiKeyEnv || ''].filter(Boolean).join(' · ') || '-')}</small>
+      ${fallback}
+      ${summary}
+    </div>
+  `;
+}
+
 function renderFeishuSendReceipt(payload) {
   const receipt = payload?.receipt || {};
   const finalImage = receipt.finalImage || {};
+  const qualityGate = payload?.qualityGate || receipt.qualityGate || null;
   const preflightArtifact = (payload?.preflight?.artifacts || []).find((item) => item.key === 'imagePath') || {};
   const imagePath = finalImage.path || preflightArtifact.path || $('finalImagePath').value.trim();
   const fileName = finalImage.fileName || fileNameFromPath(imagePath);
@@ -3287,7 +3346,9 @@ function renderFeishuSendReceipt(payload) {
       <div><dt>Size</dt><dd>${escapeHtml(formatBytes(sizeBytes))}</dd></div>
       <div><dt>Delivery</dt><dd>${escapeHtml(delivery)}</dd></div>
       <div><dt>Messages</dt><dd>${escapeHtml(receipt.messageCount || '-')}</dd></div>
+      <div><dt>Vision QA</dt><dd>${escapeHtml(feishuQualityGateLabel(qualityGate))}</dd></div>
     </dl>
+    ${renderFeishuQualityGateBlock(qualityGate)}
     <div class="artifact-list">
       <div><strong>final.png</strong><span>${escapeHtml(imagePath || '-')}</span></div>
       <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
@@ -3298,6 +3359,7 @@ function renderFeishuSendReceipt(payload) {
 function renderFeishuSendError(error) {
   const payload = error?.payload || {};
   const details = payload.details;
+  const qualityGate = details?.qualityGate || null;
   const findings = Array.isArray(details?.findings)
     ? details.findings.map((item) => `<div class="issue err"><b>${escapeHtml(item.code)}</b>${escapeHtml(item.message)}</div>`).join('')
     : '';
@@ -3308,6 +3370,7 @@ function renderFeishuSendError(error) {
     </div>
     <div class="issue err"><b>error</b>${escapeHtml(payload.error || error.message || '未知错误')}</div>
     ${findings}
+    ${renderFeishuQualityGateBlock(qualityGate)}
     <div class="artifact-list">
       <div><strong>final.png</strong><span>${escapeHtml($('finalImagePath').value.trim() || '-')}</span></div>
       <div><strong>PSD</strong><span>仅本地保存，不发送</span></div>
@@ -3414,7 +3477,7 @@ async function sendFeishuFinal(options = {}) {
     const preflight = await preflightFeishu();
     if (preflight.status !== 'ready') return;
     setFeishuBusy(true, '发送中...');
-    renderFeishuProgress('正在发送 PNG 成品', feishuTargetLabel(preflight.target));
+    renderFeishuProgress('发送前 Vision QA + PNG 成品投递', feishuTargetLabel(preflight.target));
     const payload = await api('/api/feishu/send-final', {
       method: 'POST',
       body: JSON.stringify(feishuPayload(options)),

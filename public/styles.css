@@ -1779,6 +1779,62 @@ select:focus {
   font-size: 10px;
 }
 
+.quality-gate-card {
+  background: #f8fafc;
+  border: 1px solid #dbe7f7;
+  border-radius: 7px;
+  display: grid;
+  gap: 5px;
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.quality-gate-card.completed {
+  background: #f2fbf7;
+  border-color: #b9ebd0;
+}
+
+.quality-gate-card.fallback {
+  background: #fffaf0;
+  border-color: #ecd6a3;
+}
+
+.quality-gate-card strong,
+.quality-gate-card span,
+.quality-gate-card small {
+  overflow-wrap: anywhere;
+}
+
+.quality-gate-card strong {
+  color: #102a5f;
+  font-size: 12px;
+}
+
+.quality-gate-card span {
+  color: #475467;
+  font-size: 11px;
+}
+
+.quality-gate-card small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.quality-gate-card pre {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(16, 42, 95, 0.08);
+  border-radius: 6px;
+  color: #29364a;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 7px;
+  white-space: pre-wrap;
+}
+
 .button-row.stretch.send-history-actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

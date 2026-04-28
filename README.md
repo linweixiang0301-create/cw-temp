@@ -71,6 +71,7 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `POST /api/feishu/targets`
 - `DELETE /api/feishu/targets/:id`
 - `GET /api/feishu/send-history`
+- `GET /api/feishu/send-history/export`
 - `POST /api/feishu/preflight-final`
 - `POST /api/feishu/send-final`
 - `GET /api/model-routes`
@@ -80,6 +81,7 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `GET /api/model-routes/usage-history`
 - `POST /api/models/image/generate`
 - `POST /api/models/vision/qa`
+- `GET /api/regression/feishu-output`
 - `GET /api/regression/model-routing`
 
 ## 飞书输出
@@ -97,7 +99,9 @@ export PS_AUTOMATION_FEISHU_USER_ID=ou_xxx
 
 控制台可以把手动填写的真实 Chat/User 目标保存为本地最近目标，数据只写入本机运行时 state，不进入仓库。
 
-每次调用发送接口都会写入本地发送历史：成功记录目标、最终 PNG、投递方式和消息数量；失败记录错误与预检 findings。
+`/api/feishu/send-final` 在预检通过且未被重复发送保护拦截后，会先对当前 `final.png` 执行 Vision QA，再发送文本摘要和 PNG。QA 使用 vision 路由主备模型；如果模型失败，会记录 `manual_review` 警告但不阻断 PNG 投递。
+
+每次调用发送接口都会写入本地发送历史：成功记录目标、最终 PNG、投递方式、消息数量和发送前 QA 结果；失败记录错误、预检 findings 和已完成的 QA 结果。
 
 ## 模型路由
 
