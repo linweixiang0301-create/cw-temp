@@ -1,3 +1,46 @@
+# 2026-04-28 任务 — vision provider gpt-5.5 候选实测
+
+## 目标
+- 使用真实 vision provider 测试 `gemini-3-flash-preview` 与 `gpt-5.5`。
+- `gpt-5.5` 使用用户提供的临时 provider key，同 `https://ai.flashapi.top` 端口；密钥不写入仓库、任务记录或 runtime state。
+- 输入当前真实 `final.png`，比较模型是否真实命中、质检文本、耗时和失败情况。
+
+## 计划
+- [x] 读取当前 vision 路由和真实 `final.png`。
+- [x] 用当前服务路由验证 `gemini-3-flash-preview`。
+- [x] 用用户提供的临时 key 直接调用 provider，验证 `/v1/models` 和 `gpt-5.5` vision QA。
+- [x] 基于真实结果决定是否切换 vision 优选/备选；如需持久配置，只保存环境变量名，不保存密钥。
+- [x] 运行回归检查并记录回顾。
+
+## 回顾
+- 当前生产 vision 路由：
+  - 优选：`gemini-3-flash-preview`
+  - 备选：`gemini-3.1-pro-preview`
+  - provider：`https://ai.flashapi.top`
+  - apiKeyEnv：`GEMINI_FLASH_API_KEY`
+- 当前真实 `final.png`：
+  - 路径：`/Users/a1234/Desktop/飞书Claude/claude-feishu-bridge/.runtime/bridge-state/photoshop-jobs/running/photoshop-be946f18-7e54-497c-9548-483d2ea4c85b/final.png`
+  - 大小：`1,852,542 bytes`
+- `gemini-3-flash-preview` 实测：
+  - 调用方式：控制台 `/api/models/vision/qa`
+  - 状态：`completed`
+  - 真实命中：`gemini-3-flash-preview`
+  - 耗时约 `14.4s`
+  - 结果判断：可发飞书；提示医美关键词、肖像授权和合规风险。
+- `gpt-5.5` 实测：
+  - 调用方式：使用用户提供的临时 provider key 直接调用 `https://ai.flashapi.top/v1`；密钥未写入仓库、任务记录或 runtime state。
+  - `/v1/models` 返回 `modelCount=1`，只包含 `gpt-5.5`；不包含 `gemini-3-flash-preview`。
+  - vision QA 状态：`completed`
+  - 真实命中：`gpt-5.5`
+  - 耗时约 `10.6s`
+  - usage：`prompt_tokens=3085`、`completion_tokens=127`、`total_tokens=3212`
+  - 结果判断：可发飞书；文字正常、画面完整、无明显水印/黑边；提示肖像和医美合规风险。
+- 结论：
+  - 单次质检表现上，`gpt-5.5` 更快，摘要更直接，适合作为下一版 vision 优选候选。
+  - 但当前 PS 控制台 vision 路由只支持一个 `apiKeyEnv`，而实测当前 Gemini key 只返回 Gemini 模型、临时 GPT key 只返回 `gpt-5.5`；同端口但不同 key 权限，不能在现有结构里可靠保存 `gpt-5.5` 主模型 + Gemini 备选。
+  - 因此本轮未切换生产 vision 路由，保持 `gemini-3-flash-preview` + `gemini-3.1-pro-preview`，避免破坏已有 UI 质检链路。
+  - 下一步如要正式接入 `gpt-5.5`，需要给 vision 路由增加“多凭据 / per-model apiKeyEnv fallback”能力，或将 `gpt-5.5` 作为单独 route key 接入。
+
 # 2026-04-28 任务 — image 生产路由按性价比切换
 
 ## 目标
