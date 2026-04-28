@@ -1,3 +1,38 @@
+# 2026-04-28 任务 — image 生产路由按性价比切换
+
+## 目标
+- 按用户确认的性价比策略调整生产 image 路由。
+- 优选改为 `gpt-image-2`，备选改为 `gemini-3-pro-image-preview-4k`。
+- 保持真实 provider、非阻断 fallback 和 PS + 飞书主链路不变。
+
+## 计划
+- [x] 读取当前 image 路由，确认切换前 baseline。
+- [x] 保存生产 image 路由：`gpt-image-2` + `gemini-3-pro-image-preview-4k`。
+- [x] 执行 live probe，确认两者均能在 provider 模型列表中命中。
+- [x] 执行 model-routing regression 和基础检查。
+- [x] 记录回顾并推送远端。
+
+## 回顾
+- 切换前生产 image 路由为：优选 `gemini-3-pro-image-preview-4k`，备选 `gemini-3-pro-image-preview-vip`。
+- 已按用户确认的性价比策略保存新生产 image 路由：
+  - 优选：`gpt-image-2`
+  - 备选：`gemini-3-pro-image-preview-4k`
+  - source：`tuzi-image-cost-preferred`
+  - provider：`https://api.tu-zi.com/v1`
+  - apiKeyEnv：`GEMINI_TUZI_API_KEY`
+- `/api/model-routes/live-probe` 验证：
+  - routeReady：`true`
+  - matchedModels：`gpt-image-2`、`gemini-3-pro-image-preview-4k`
+  - status：`ready`
+  - modelCount：`444`
+  - findings：无
+- `/api/regression/model-routing` 返回 `ready`；image fallback 仍为 `manual_file`，不会生成假文件，不阻断 PS + 飞书主链路。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+- 本轮只变更本机模型路由和任务记录；未发送飞书消息，未外发 PSD。
+
 # 2026-04-28 任务 — gpt-image-2 image 模型实测
 
 ## 目标
