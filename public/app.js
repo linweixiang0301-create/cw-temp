@@ -328,7 +328,7 @@ function renderFeishuDefaultStatus(feishu) {
 
 const MODEL_ROUTE_KEYS = [
   ['instruction', '指令解析'],
-  ['image', '生图 / 图生图'],
+  ['image', '生图 / 拆层'],
   ['vision', '最终质检'],
 ];
 
@@ -848,7 +848,7 @@ function selectedPsdRebuildUpload() {
 
 function renderPsdRebuildPanel() {
   const uploadSelect = $('psdRebuildUploadSelect');
-  const modelSelect = $('psdRebuildVisionModel');
+  const modelSelect = $('psdRebuildAnalysisModel');
   if (!uploadSelect || !modelSelect) return;
   const currentUploadId = uploadSelect.value;
   const uploads = state.imageUploads || [];
@@ -865,8 +865,8 @@ function renderPsdRebuildPanel() {
     $('psdRebuildImagePath').value = selectedUpload.storedPath || '';
   }
   const currentModel = modelSelect.value;
-  modelSelect.innerHTML = modelOptionsForRouteHtml('vision', currentModel, '未配置');
-  if (currentModel && modelRouteModels('vision').includes(currentModel)) modelSelect.value = currentModel;
+  modelSelect.innerHTML = modelOptionsForRouteHtml('image', currentModel, '未配置');
+  if (currentModel && modelRouteModels('image').includes(currentModel)) modelSelect.value = currentModel;
   renderPsdRebuildHistory();
   renderPsdLayerLibrary();
 }
@@ -898,7 +898,7 @@ function renderLayerManifestPreview(layerManifest) {
       </div>
       ${roleBoundary ? `
         <div class="issue ok">
-          <b>模型分工</b>${escapeHtml(`${roleBoundary.analysisRoute || 'vision'} 负责拆层分析；${roleBoundary.generationRoute || 'image'} 只在重绘/补全素材时生成真实图片文件。`)}
+          <b>模型分工</b>${escapeHtml(`${roleBoundary.analysisRoute || 'image'} 负责拆层分析；${roleBoundary.generationRoute || 'image'} 的 image.generate 只在重绘/补全素材时生成真实图片文件。`)}
         </div>
       ` : ''}
       <div class="psd-layer-list">
@@ -1037,7 +1037,7 @@ function renderPsdLayerLibraryDetail(payload, photoshop = null) {
     detailEl.innerHTML = '<div class="empty">未读取到拆解图层详情。</div>';
     return;
   }
-  const compatibility = job.visionInput?.compatibility || layerManifest?.visionInput?.compatibility || null;
+  const compatibility = job.analysisInput?.compatibility || layerManifest?.analysisInput?.compatibility || job.visionInput?.compatibility || layerManifest?.visionInput?.compatibility || null;
   const findings = (job.findings || []).map((item) => `
     <div class="issue ${item.severity === 'warning' ? 'warn' : item.severity === 'error' ? 'err' : 'ok'}">
       <b>${escapeHtml(item.code || 'finding')}</b>${escapeHtml(item.message || '-')}
@@ -1189,14 +1189,15 @@ async function startPsdRebuild() {
   const executePhotoshop = Boolean($('psdRebuildExecutePhotoshop')?.checked);
   $('startPsdRebuildBtn').disabled = true;
   $('startPsdRebuildBtn').textContent = '拆层中...';
-  setMessage('psdRebuildResults', '<div class="empty">正在调用真实拆层分析模型读取图片，并生成本地重建包...</div>', 'html');
+  setMessage('psdRebuildResults', '<div class="empty">正在调用真实 image-2 拆层分析模型读取图片，并生成本地重建包...</div>', 'html');
   try {
     const payload = await api('/api/psd-rebuild/jobs', {
       method: 'POST',
       body: JSON.stringify({
         uploadId: selectedUpload?.id || '',
         imagePath: selectedUpload ? '' : imagePath,
-        modelId: $('psdRebuildVisionModel')?.value?.trim() || '',
+        modelId: $('psdRebuildAnalysisModel')?.value?.trim() || '',
+        analysisRouteKey: 'image',
         executePhotoshop,
       }),
     });

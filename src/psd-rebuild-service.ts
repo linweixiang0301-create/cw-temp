@@ -7,7 +7,7 @@ import { loadPhotoshopConfigBridge } from './bridge.js';
 import { imageInfoFromBuffer } from './image-upload.js';
 import {
   getResolvedModelRoute,
-  runVisionLayerAnalysis,
+  runLayerAnalysis,
 } from './model-routing.js';
 import {
   addModelUsageRecord,
@@ -25,6 +25,7 @@ type CreatePsdRebuildJobInput = {
   modelId?: string;
   prompt?: string;
   executePhotoshop?: boolean;
+  analysisRouteKey?: 'image' | 'vision';
 };
 
 type SourceImage = {
@@ -76,6 +77,7 @@ type PsdRebuildLibraryItem = PsdRebuildJobRecord & {
   photoshopScriptFile: LocalFileStatus;
   outputPsdFile: LocalFileStatus;
   previewImageFile: LocalFileStatus;
+  analysisInput?: unknown;
   visionInput?: unknown;
   layerPolicy?: unknown;
 };
@@ -280,6 +282,7 @@ function buildManifest(input: {
   model?: string | null;
   selectedRole?: string | null;
   fallbackReason?: string | null;
+  analysisRouteKey: 'image' | 'vision';
   analysisRequestImagePath?: string | null;
   analysisImageCompatibility?: Record<string, unknown> | null;
 }): Record<string, unknown> {
@@ -298,20 +301,28 @@ function buildManifest(input: {
       note: 'JPG/PNG/WEBP 不包含原始 PSD 图层；以下为 AI 辅助重建建议与本地 PSD 生成输入。',
     },
     modelRoleBoundary: {
-      analysisRoute: 'vision',
-      analysisPurpose: '读取扁平图片并输出结构化 layer JSON。',
+      analysisRoute: input.analysisRouteKey,
+      analysisPurpose: input.analysisRouteKey === 'image'
+        ? '使用 image 路由主模型读取扁平图片并输出结构化 layer JSON。'
+        : '使用 vision 路由读取扁平图片并输出结构化 layer JSON。',
       generationRoute: 'image',
-      generationPurpose: '后续重绘、补全或生成图层素材时才调用，且必须落成真实本机图片文件。',
+      generationPurpose: '后续重绘、补全或生成图层素材时才调用 image.generate，且必须落成真实本机图片文件。',
       generationInvokedInThisJob: false,
     },
     model: input.model || null,
     selectedRole: input.selectedRole || null,
-    visionInput: {
+    analysisInput: {
+      routeKey: input.analysisRouteKey,
       originalImagePath: input.source.path,
       requestImagePath: input.analysisRequestImagePath || input.source.path,
       compatibility: input.analysisImageCompatibility || null,
     },
-    summary: input.analysisJson?.summary || (input.status === 'ai_analyzed' ? '视觉模型已返回拆层建议。' : '模型不可用或未返回结构化结果，保留真实单图层重建包。'),
+    visionInput: input.analysisRouteKey === 'vision' ? {
+      originalImagePath: input.source.path,
+      requestImagePath: input.analysisRequestImagePath || input.source.path,
+      compatibility: input.analysisImageCompatibility || null,
+    } : undefined,
+    summary: input.analysisJson?.summary || (input.status === 'ai_analyzed' ? '拆层分析模型已返回拆层建议。' : '模型不可用或未返回结构化结果，保留真实单图层重建包。'),
     layers: input.layers,
     textCandidates,
     reconstructionPlan,
@@ -497,8 +508,9 @@ function sourceFromLibraryItem(item: PsdRebuildLibraryItem): SourceImage {
 }
 
 function photoshopOpenPathFromManifest(manifest: Record<string, unknown> | null, fallbackPath: string): string {
+  const analysisInput = maybeRecord(manifest?.analysisInput);
   const visionInput = maybeRecord(manifest?.visionInput);
-  const requestImagePath = String(visionInput?.requestImagePath || '').trim();
+  const requestImagePath = String(analysisInput?.requestImagePath || visionInput?.requestImagePath || '').trim();
   return requestImagePath && fs.existsSync(requestImagePath) && fs.statSync(requestImagePath).isFile()
     ? requestImagePath
     : fallbackPath;
@@ -585,6 +597,7 @@ function buildLibraryItem(jobId: string, existing: PsdRebuildJobRecord | null = 
     photoshopScriptFile,
     outputPsdFile,
     previewImageFile,
+    analysisInput: layerManifest?.analysisInput || null,
     visionInput: layerManifest?.visionInput || null,
     layerPolicy: layerManifest?.layerPolicy || null,
   };
@@ -705,6 +718,7 @@ export async function exportPsdRebuildLibraryJob(jobId: string): Promise<Record<
       summary: updated.job.summary,
       manifestStatus: updated.job.manifestStatus,
       generatedAt: updated.job.generatedAt,
+      analysisInput: updated.job.analysisInput,
       visionInput: updated.job.visionInput,
       layerPolicy: updated.job.layerPolicy,
       findings,
@@ -724,6 +738,7 @@ export async function exportPsdRebuildLibraryJob(jobId: string): Promise<Record<
 
 function safeAddLayerAnalysisUsage(input: {
   source: SourceImage;
+  routeKey: 'image' | 'vision';
   status: 'completed' | 'fallback';
   model?: string | null;
   selectedRole?: string | null;
@@ -734,11 +749,11 @@ function safeAddLayerAnalysisUsage(input: {
   attempts?: unknown;
   usage?: Record<string, unknown> | null;
 }): void {
-  const route = getResolvedModelRoute('vision');
+  const route = getResolvedModelRoute(input.routeKey);
   try {
     addModelUsageRecord({
-      operation: 'vision.layer_analysis',
-      routeKey: 'vision',
+      operation: input.routeKey === 'image' ? 'image.layer_analysis' : 'vision.layer_analysis',
+      routeKey: input.routeKey,
       status: input.status,
       model: input.model || null,
       provider: route.provider,
@@ -777,6 +792,7 @@ function safeAddLayerAnalysisUsage(input: {
 
 export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Promise<Record<string, unknown>> {
   const source = resolveSource(input);
+  const analysisRouteKey = input.analysisRouteKey === 'vision' ? 'vision' : 'image';
   const jobId = crypto.randomUUID();
   const dir = rebuildDir(jobId);
   const layerManifestPath = path.join(dir, 'layer-manifest.json');
@@ -796,7 +812,8 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
   let fallbackReason: string | null = null;
 
   try {
-    const result = await runVisionLayerAnalysis({
+    const result = await runLayerAnalysis({
+      routeKey: analysisRouteKey,
       imagePath: source.path,
       modelId: String(input.modelId || '').trim(),
       prompt: String(input.prompt || '').trim(),
@@ -811,7 +828,7 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
     analysisAttempts = Array.isArray(analysis.attempts) ? analysis.attempts : [];
     analysisRequestImagePath = analysis.requestImagePath ? String(analysis.requestImagePath) : null;
     analysisImageCompatibility = maybeRecord(analysis.imageCompatibility);
-    if (!analysisJson) fallbackReason = '视觉模型返回了文本，但不是可解析的严格 JSON，已保留 rawAnalysisText 并使用单图层 fallback。';
+    if (!analysisJson) fallbackReason = '拆层分析模型返回了文本，但不是可解析的严格 JSON，已保留 rawAnalysisText 并使用单图层 fallback。';
   } catch (error) {
     const details = maybeRecord((error as { details?: unknown } | null)?.details) || {};
     analysisAttempts = Array.isArray(details.attempts)
@@ -834,6 +851,7 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
     model,
     selectedRole,
     fallbackReason,
+    analysisRouteKey,
     analysisRequestImagePath,
     analysisImageCompatibility,
   });
@@ -850,6 +868,7 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
 
   safeAddLayerAnalysisUsage({
     source,
+    routeKey: analysisRouteKey,
     status: analysisJson ? 'completed' : 'fallback',
     model,
     selectedRole,

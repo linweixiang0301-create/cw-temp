@@ -1,3 +1,3 @@
 # Lessons
 
-- 2026-04-28：PS 自动化里的“智能拆层 / PSD 重建”要明确区分模型职责：vision 负责读取扁平图片并输出结构化 layer JSON，image 负责后续重绘/补全真实素材；UI 不应只写“Vision 模型”造成它像最终质检项，也不应暗示生图模型能直接恢复原始 PSD 图层。
+- 2026-04-28：用户明确纠正 PS 自动化里的“智能拆层 / PSD 重建”默认拆层模型应走 image 路由的 `gpt-image-2`，不是 vision 质检模型；需要在审计中区分 `image.layer_analysis` 与 `image.generate`，并在失败时回退真实单图层 manifest，不伪造拆层。

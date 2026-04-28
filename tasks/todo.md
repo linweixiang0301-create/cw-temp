@@ -1,3 +1,69 @@
+# 2026-04-28 任务 — 拆解图片图层模型切换到 image-2
+
+## 目标
+- 按用户纠正，将“拆解图片图层 / PSD 重建 layer analysis”默认从 `vision` 路由切换到 `image` 路由主模型 `gpt-image-2`。
+- UI 的“拆层分析模型”下拉使用 image 路由模型，而不是 vision 质检模型。
+- manifest 和模型审计明确记录 `analysisRoute=image`，并保留 `image.generate` 与 `image.layer_analysis` 的区别。
+- 若真实 `gpt-image-2` provider 不支持图片输入/结构化 JSON，按现有策略回退单图层 manifest，不伪造拆层，不阻断 PS + 飞书主链路。
+
+## 计划
+- [x] 更新模型路由协作文案：image 负责生图与拆层分析，vision 只负责最终 PNG 质检。
+- [x] 更新 PSD 重建服务：默认用 image 路由执行 layer analysis，manifest 写入 `analysisInput` 和 `modelRoleBoundary.analysisRoute=image`。
+- [x] 更新 UI：拆层分析模型下拉改读 image 路由，运行提示和图库详情同步改名。
+- [x] 真实执行一次 PSD 重建作业，验证模型审计、manifest、图层库和 fallback 行为。
+- [x] 运行类型检查、前端语法检查、密钥扫描和远端回归。
+
+## 验证计划
+- 真实调用 `/api/psd-rebuild/jobs`，不使用 mock。
+- 真实读取新 `layer-manifest.json`，确认 `modelRoleBoundary.analysisRoute=image`、`analysisInput.routeKey=image`、`generationInvokedInThisJob=false`。
+- 真实读取 `/api/psd-rebuild/library/:jobId`，确认图层库可查看新 job。
+- 对比执行前后模型使用记录，确认新增的是 `image.layer_analysis`，不是 `image.generate`。
+- 扫描 API 响应，确认没有 token/cookie/key 明文。
+
+## 回顾
+- 已按用户纠正将 PSD 重建 layer analysis 默认切换到 `image` 路由：
+  - image route label：`生图 / 拆层分析模型`
+  - vision route label：`最终质检模型`
+  - UI “拆层分析模型”下拉现在读取 image 路由模型，默认优选 `gpt-image-2`。
+- 后端变更：
+  - 新增通用 `runLayerAnalysis()`，PSD rebuild 默认 `analysisRouteKey=image`。
+  - manifest 新增/使用 `analysisInput`，并写入 `modelRoleBoundary.analysisRoute=image`。
+  - 模型审计新增 `image.layer_analysis`，和 `image.generate` 分开记录。
+  - 旧 `visionInput` 仅作为兼容旧 manifest / 旧 job 使用。
+- 真实验证：
+  - 服务重启到 `http://127.0.0.1:3498`，PID `43127`。
+  - `/api/model-routes/orchestration` 返回：
+    - image stage label：`生图 / 拆层分析模型`
+    - image primary：`gpt-image-2`
+    - vision stage label：`最终质检模型`
+    - handoff：`拆层分析到 PSD 重建` 为 image -> Photoshop。
+  - 使用真实上传图 `6165414e-3c52-4475-9434-91c006b9e0b3` 调用 `/api/psd-rebuild/jobs`：
+    - job id：`5005820a-93a8-4ed7-aeff-971ed05cfa61`
+    - requested model：`gpt-image-2`
+    - status：`fallback`
+    - model：`gpt-image-2`
+    - selectedRole：`primary`
+    - layerCount：`1`
+    - manifest：`/Users/a1234/.codex/ps-automation/psd-rebuild/5005820a-93a8-4ed7-aeff-971ed05cfa61/layer-manifest.json`
+    - `modelRoleBoundary.analysisRoute=image`
+    - `analysisInput.routeKey=image`
+    - `visionInput=null`
+    - `generationInvokedInThisJob=false`
+  - 真实 provider 返回成功文本但不是严格 JSON，因此按设计落入 `single_raster_manifest` fallback，没有伪造拆层。
+  - `/api/model-routes/usage-history` 新增：
+    - operation：`image.layer_analysis`
+    - routeKey：`image`
+    - status：`fallback`
+    - model：`gpt-image-2`
+    - audit attempt：`gpt-image-2` primary success
+    - 未新增 `image.generate`
+  - API 响应扫描未包含 `access_token`、`refresh_token`、`id_token`、`Bearer ` 或 `sk-`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果。
+
 # 2026-04-28 任务 — 拆层模型职责命名与协作边界修正
 
 ## 目标

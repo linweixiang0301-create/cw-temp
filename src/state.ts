@@ -152,7 +152,7 @@ export type ModelRouteRecord = {
 export type ModelUsageRecord = {
   id: string;
   createdAt: string;
-  operation: 'image.generate' | 'vision.qa' | 'vision.layer_analysis';
+  operation: 'image.generate' | 'image.layer_analysis' | 'vision.qa' | 'vision.layer_analysis';
   routeKey: ModelRouteKey;
   status: 'generated' | 'completed' | 'fallback' | 'failed';
   model?: string | null;
