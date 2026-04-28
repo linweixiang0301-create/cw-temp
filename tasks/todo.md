@@ -48,6 +48,15 @@
   - `node --check public/app.js`
   - `git diff --check`
   - 仓库密钥扫描无 `sk-...` 明文
+- 已推送远端 main：
+  - `f7fc29323196a656e2e6e0220b5331d7ba029310` — `Add design006 download preflight gate`
+- 远端 fresh clone 回归：
+  - clone HEAD：`f7fc29323196a656e2e6e0220b5331d7ba029310`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 仓库密钥扫描无 `sk-...` 明文
+  - 空 runtime、备用端口 `3631` 的 `/api/status` 正常，downloads 为 `0`，design006 `downloadPreflight=null`
 
 # 2026-04-28 任务 — design006 登录态验证分区与下载前闸门
 
