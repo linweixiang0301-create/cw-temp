@@ -1,3 +1,42 @@
+# 2026-04-28 任务 — gpt-image-2 image 模型实测
+
+## 目标
+- 使用真实 image provider 单模型测试 `gpt-image-2-vip` 和 `gpt-image-2`。
+- 确认每个候选是否实际命中自身、是否生成真实图片文件、图片格式/尺寸/大小和耗时。
+- 测试后恢复当前已筛选 image 路由，避免影响 PS + 飞书主链路。
+
+## 计划
+- [x] 读取当前 image 路由和 live probe，确认 baseline。
+- [x] 临时切到 `gpt-image-2-vip` 单模型路由并调用真实生图。
+- [x] 临时切到 `gpt-image-2` 单模型路由并调用真实生图。
+- [x] 恢复当前 image 路由：`gemini-3-pro-image-preview-4k` + `gemini-3-pro-image-preview-vip`。
+- [x] 运行路由验证和检查，并记录回顾。
+
+## 回顾
+- baseline image 路由：
+  - 优选：`gemini-3-pro-image-preview-4k`
+  - 备选：`gemini-3-pro-image-preview-vip`
+  - provider：`https://api.tu-zi.com/v1`，`live-probe=ready`，`modelCount=444`。
+- `gpt-image-2-vip` 单模型实测：
+  - live probe matched：`gpt-image-2-vip`。
+  - 生图 API：`generated`，真实命中 `gpt-image-2-vip`，endpointKind=`images`。
+  - 产物：`/Users/a1234/.codex/ps-automation/model-artifacts/image/2026-04-28T08-46-39-735Z-direct-gpt-image-2-vip-cd3c37c7.png`。
+  - 格式/尺寸/大小：PNG，`1254x1254`，`1,494,932 bytes`。
+  - 耗时约 `35.7s`，无 fallback。
+- `gpt-image-2` 单模型实测：
+  - live probe matched：`gpt-image-2`。
+  - 生图 API：`generated`，真实命中 `gpt-image-2`，endpointKind=`images`。
+  - 产物：`/Users/a1234/.codex/ps-automation/model-artifacts/image/2026-04-28T08-47-13-965Z-direct-gpt-image-2-4c660bc2.png`。
+  - 格式/尺寸/大小：PNG，`1254x1254`，`1,527,126 bytes`。
+  - 耗时约 `33.7s`，无 fallback。
+- 视觉验收：
+  - 两张图均为浅色医美诊室背景，无文字、无 logo、无水印。
+  - `gpt-image-2` 构图更干净，更适合作为 GPT 组优选；`gpt-image-2-vip` 可作为 GPT 组备选。
+- 路由处理：
+  - 测试后已恢复生产 image 路由为 `gemini-3-pro-image-preview-4k` + `gemini-3-pro-image-preview-vip`。
+  - 暂不替换生产路由：当前 Gemini 优选输出 `4096x4096`，比 GPT 组 `1254x1254` 更适合高清 Photoshop 主链路。
+  - 最终路由 live probe 仍为 `ready`，无 findings。
+
 # 2026-04-28 任务 — image / vision 备选模型实测筛选
 
 ## 目标
