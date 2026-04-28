@@ -15,10 +15,25 @@
 - [x] UI 的 AI 图片替换从“手动填生成文件”升级为可触发真实生成，成功后回填本地文件并加入 action。
 - [x] Artifact / 飞书工作台增加 final.png 质检入口与结果展示。
 - [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证。
-- [ ] 远端冷启动回归并推送 GitHub。
+- [x] 远端冷启动回归并推送 GitHub。
 
 ## 回顾
-- 待完成。
+- 已新增本地 `modelRoutes` runtime state，只保存非敏感配置：route key、provider、primary/fallback、Base URL、API Key 环境变量名、来源备注和启用状态；不会保存 token/key 原文。
+- 新增 `/api/model-routes`、`/api/model-routes/preflight`、`/api/models/image/generate`、`/api/models/vision/qa`。
+- `/api/status` 的 `models` 现在返回合并后的 instruction / image / vision 路由状态、ready 标记和 findings；当前本机没有模型环境变量，也没有常见本地 OpenAI-compatible 端口监听，所以三路均为未配置。
+- image 生成已接 OpenAI-compatible `/v1/images/generations`：只有 provider 返回真实图片数据并通过 PNG/JPG/WEBP 魔数检查，才会落盘到 runtime `model-artifacts/image` 并回填路径；未配置或调用失败时返回 `manual_file` 回退，不伪造图片。
+- vision 质检已接 OpenAI-compatible `/v1/chat/completions` 视觉输入：对当前真实 `final.png` 调用时因模型未配置返回 `manual_review` 非阻断回退，不影响 Photoshop / 飞书主链路。
+- UI 已新增模型路由配置面板、三路模型下拉、AI 图片“生成并回填”、飞书输出区 `final.png` 质检入口。
+- 验证结果：
+  - `npm run check` 通过。
+  - `node --check public/app.js` 通过。
+  - `git diff --check` 通过。
+  - 本地 `http://127.0.0.1:3498` API smoke 通过：`/api/model-routes` 返回 3 路状态，空主模型保存返回 HTTP 400，image/vision 未配置时均走回退。
+  - 当前真实 `final.png` 存在，大小 `1,852,542 bytes`；vision smoke 使用该真实图片验证回退。
+  - 飞书发送历史仍为 2 条，未新增飞书消息，未发送 PSD。
+  - 浏览器桌面 1440x1200 与移动 390x844 验证通过：模型配置面板可见、final.png 质检入口可见、控制台无 error、无横向溢出。
+  - 已推送远端 main：`40d552332558b80c47f7a12ec3e3d26cee5070ef`。
+  - 远端冷启动克隆 `/tmp/ps-console-model-cold.NKz5II/repo` 通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3602` 的 `/api/status`、`/api/model-routes`、`/api/model-routes/preflight`、image fallback、vision fallback。
 
 # 2026-04-28 任务 — 飞书发送后状态回执优化
 
