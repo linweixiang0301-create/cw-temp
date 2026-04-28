@@ -479,16 +479,25 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.design006-auth-card {
+.design006-auth-card,
+.design006-download-preflight-card {
   align-items: center;
-  background: linear-gradient(135deg, #f8fafc, #eef6ff);
   border: 1px solid #dbe7f6;
   border-radius: 7px;
   display: grid;
   gap: 10px;
   grid-column: 1 / -1;
-  grid-template-columns: 120px 180px minmax(0, 1fr) auto;
   padding: 10px;
+}
+
+.design006-auth-card {
+  background: linear-gradient(135deg, #f8fafc, #eef6ff);
+  grid-template-columns: 120px 180px minmax(0, 1fr) auto;
+}
+
+.design006-download-preflight-card {
+  background: linear-gradient(135deg, #fbfcff, #f3f8f4);
+  grid-template-columns: 150px 180px minmax(0, 1fr);
 }
 
 .auth-fact,
@@ -2340,6 +2349,35 @@ select:focus {
   gap: 6px;
 }
 
+.compact-receipt {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.compact-receipt div {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 120px minmax(0, 1fr);
+}
+
+.compact-receipt dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-receipt dd {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .issue {
   border-radius: 7px;
   font-size: 12px;
@@ -2422,7 +2460,9 @@ pre {
   .status-strip,
   .source-grid,
   .design006-auth-card,
-  .auth-actions {
+  .design006-download-preflight-card,
+  .auth-actions,
+  .compact-receipt div {
     grid-template-columns: 1fr;
   }
 

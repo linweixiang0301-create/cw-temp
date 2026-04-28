@@ -1671,11 +1671,30 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/design006/download') {
+    if (req.method === 'POST' && url.pathname === '/api/design006/download/preflight') {
       const body = await readJsonBody<{ url?: string; candidate?: Record<string, unknown> }>(req);
       const detailUrl = String(body.url || '').trim();
       if (!detailUrl && !body.candidate) throw new Error('缺少 URL 或 candidate。');
-      sendJson(res, 200, await design006.download({ detailUrl, candidate: body.candidate }));
+      const preflight = await design006.preflightDownload({ detailUrl, candidate: body.candidate });
+      sendJson(res, 200, { ok: true, ready: preflight.status === 'ready', preflight, design006: design006.status() });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/design006/download') {
+      const body = await readJsonBody<{
+        url?: string;
+        candidate?: Record<string, unknown>;
+        preflightId?: string;
+        confirm?: string;
+      }>(req);
+      const detailUrl = String(body.url || '').trim();
+      if (!detailUrl && !body.candidate && !body.preflightId) throw new Error('缺少 URL、candidate 或 preflightId。');
+      sendJson(res, 200, await design006.download({
+        detailUrl,
+        candidate: body.candidate,
+        preflightId: body.preflightId,
+        confirm: body.confirm,
+      }));
       return true;
     }
 

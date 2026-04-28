@@ -1,3 +1,54 @@
+# 2026-04-28 任务 — design006 下载前预检与确认闸门
+
+## 目标
+- 在“模板与来源”里新增 design006 下载前真实预检分区。
+- 预检只读取真实登录态、真实详情页和本地收件箱配置；不调用下载确认或 signed_url 接口，避免预检阶段消耗积分/会员权益。
+- `/api/design006/download` 必须携带最近一次通过的预检 ID 和显式确认值，否则后端阻断。
+- UI 先预检、展示目标模板/大小/收件箱/权益风险，再由用户确认后才执行下载。
+
+## 计划
+- [x] 扩展 `Design006BrowserManager`，新增下载预检记录、过期校验和下载确认校验。
+- [x] 新增 `/api/design006/download/preflight`，返回真实 blocked/ready 检查项和确认令牌。
+- [x] 更新 UI：添加“下载前预检”和“确认下载”两步按钮，展示预检回执。
+- [x] 更新 README 与任务回顾，运行类型检查、前端语法检查和真实未登录阻断回归。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/design006/download/preflight`；未登录时应返回 `status=blocked`，已登录时可返回 `ready`，两种情况下预检本身都不执行下载。
+- 真实调用 `/api/design006/download` 不带预检确认，应被后端阻断。
+- 仓库密钥扫描确认没有写入 token/cookie/密钥。
+
+## 回顾
+- 后端新增 `preflightDownload()`：
+  - 先真实检查 design006 持久 profile 登录态。
+  - 登录通过后才解析真实详情页 candidate。
+  - 读取真实 Photoshop templateRoots，返回本机收件箱根目录。
+  - 预检阶段不调用 `confirm_download`、`download_api` 或 `signed_url`。
+- `/api/design006/download` 新增硬确认：
+  - 必须携带最近一次 ready 预检 ID。
+  - 必须携带显式确认值 `download-design006-source`。
+  - 预检过期、URL 不一致、预检 blocked、缺少确认都会阻断。
+- UI：
+  - 新增常驻 “Download Preflight” 状态卡。
+  - 下载入口拆成“下载前预检”和“确认下载到 PSD 收件箱”。
+  - 未通过登录态或未通过 ready 预检时，确认下载按钮禁用。
+  - 确认下载前还有浏览器确认框，提示可能消耗积分/会员权益，PSD/PSB 只保存本机。
+- 真实验证：
+  - 服务已重启到 `http://127.0.0.1:3498` 最新代码，screen `71311.ps-automation-console-3498`，PID `71385`。
+  - 未登录检测曾返回 `preflight.status=blocked`，checks 包含 `login_status:blocked` 与 `candidate_resolved:blocked`，没有执行下载动作。
+  - 当前真实 profile 后续检测为 `logged_in`，`/api/design006/download/preflight` 返回 `ready`，真实解析到 `https://www.design006.com/detail-99213334643` 的 candidate：`对比图标准格式医美对比图疗程对比`。
+  - 未携带预检 ID 直接调用 `/api/design006/download` 返回 HTTP `409` 阻断。
+  - 携带 ready 预检 ID 但确认值错误时，仍返回 HTTP `409` 阻断。
+  - 未发送飞书消息，未外发 PSD，未执行正确确认值下载。
+  - 下载记录数量保持 5，最新下载仍是 `2026-04-27T00:54:47.048Z` 的历史记录，说明本轮没有新增下载记录。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - 仓库密钥扫描无 `sk-...` 明文
+
 # 2026-04-28 任务 — design006 登录态验证分区与下载前闸门
 
 ## 目标

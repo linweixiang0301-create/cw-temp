@@ -108,13 +108,28 @@
                   <button id="closeDesign006LoginBtn" type="button" class="secondary">关闭登录窗口</button>
                 </div>
               </section>
+              <section class="design006-download-preflight-card" aria-label="design006 下载前预检">
+                <div class="auth-fact">
+                  <span>Download Preflight</span>
+                  <strong id="design006DownloadPreflightLabel">未预检</strong>
+                </div>
+                <div class="auth-fact">
+                  <span>Expires At</span>
+                  <strong id="design006DownloadPreflightExpires">等待预检</strong>
+                </div>
+                <div class="auth-profile">
+                  <span id="design006DownloadPreflightSummary">下载前会先核验登录态、真实详情页和本机收件箱。</span>
+                  <code id="design006DownloadPreflightTarget">-</code>
+                </div>
+              </section>
               <label class="field wide">
                 <span>design006 详情页</span>
                 <input id="designUrl" value="https://www.design006.com/detail-99213334643">
               </label>
               <div class="button-row">
                 <button id="resolveBtn" type="button" class="secondary">解析 URL</button>
-                <button id="downloadBtn" type="button" class="secondary">下载到 PSD 收件箱</button>
+                <button id="preflightDesign006DownloadBtn" type="button" class="secondary">下载前预检</button>
+                <button id="downloadBtn" type="button" class="secondary">确认下载到 PSD 收件箱</button>
               </div>
               <label class="field wide">
                 <span>Manifest 路径</span>

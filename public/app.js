@@ -25,6 +25,7 @@ const state = {
   manifestCandidates: [],
   lastCrossTemplatePayload: null,
   lastDerivedPresetPayload: null,
+  lastDesign006DownloadPreflight: null,
   pendingId: null,
   lastSessionId: null,
   jobPollToken: 0,
@@ -120,6 +121,13 @@ function design006AuthReady() {
   return design006LoginCheck()?.status === 'logged_in';
 }
 
+function design006DownloadPreflightReady() {
+  const preflight = state.lastDesign006DownloadPreflight?.preflight || state.lastDesign006DownloadPreflight;
+  if (!preflight || preflight.status !== 'ready' || !preflight.id || !preflight.confirm) return false;
+  const expiresAt = Date.parse(preflight.expiresAt || '');
+  return !Number.isFinite(expiresAt) || Date.now() < expiresAt;
+}
+
 function design006AuthLabel(status) {
   if (status === 'logged_in') return '已登录';
   if (status === 'not_logged_in') return '未登录';
@@ -127,6 +135,13 @@ function design006AuthLabel(status) {
   if (status === 'error') return '检测失败';
   if (status === 'pending_login') return '登录挂起';
   return '未检测';
+}
+
+function design006DownloadPreflightLabel(status) {
+  if (status === 'ready') return '已通过';
+  if (status === 'blocked') return '已阻断';
+  if (status === 'expired') return '已过期';
+  return '未预检';
 }
 
 function renderDesign006AuthPanel(design006 = {}) {
@@ -150,10 +165,36 @@ function renderDesign006AuthPanel(design006 = {}) {
   ].filter(Boolean).join(' · ');
   $('design006AuthProfile').textContent = profileLabel;
   $('resolveBtn').disabled = !ready || Boolean(pendingLogin);
-  $('downloadBtn').disabled = !ready || Boolean(pendingLogin);
+  $('preflightDesign006DownloadBtn').disabled = !ready || Boolean(pendingLogin);
+  $('downloadBtn').disabled = !ready || Boolean(pendingLogin) || !design006DownloadPreflightReady();
   $('checkDesign006LoginBtn').disabled = false;
   $('openDesign006LoginBtn').disabled = Boolean(pendingLogin);
   $('closeDesign006LoginBtn').disabled = !loginWindow;
+}
+
+function renderDesign006DownloadPreflightPanel(design006 = {}) {
+  const localPreflight = state.lastDesign006DownloadPreflight;
+  const statusPreflight = design006?.downloadPreflight || null;
+  const preflight = localPreflight || statusPreflight || {};
+  const labelEl = $('design006DownloadPreflightLabel');
+  if (!labelEl) return;
+  const expiresAt = Date.parse(preflight.expiresAt || '');
+  const expired = Number.isFinite(expiresAt) && Date.now() > expiresAt;
+  const status = expired ? 'expired' : String(preflight.status || 'not_checked');
+  const ready = status === 'ready';
+  labelEl.textContent = design006DownloadPreflightLabel(status);
+  labelEl.className = ready ? 'ok' : status === 'not_checked' ? '' : 'warn';
+  $('design006DownloadPreflightExpires').textContent = preflight.expiresAt ? formatLocalDateTime(preflight.expiresAt) : '等待预检';
+  $('design006DownloadPreflightSummary').textContent = preflight.summary || (
+    ready
+      ? '最近一次下载前预检通过。'
+      : '下载前会先核验登录态、真实详情页和本机收件箱。'
+  );
+  $('design006DownloadPreflightTarget').textContent = [
+    preflight.candidate?.title || preflight.title || '',
+    preflight.detailUrl || preflight.candidate?.detailUrl || '',
+    preflight.inboxRoot || '',
+  ].filter(Boolean).join(' · ') || '-';
 }
 
 function renderDesign006LoginResult(payload) {
@@ -170,6 +211,33 @@ function renderDesign006LoginResult(payload) {
         ${check.findings.map((item) => `<div class="issue warn"><b>login_check</b>${escapeHtml(item)}</div>`).join('')}
       </div>
     ` : ''}
+  `;
+}
+
+function renderDesign006DownloadPreflight(payload) {
+  const preflight = payload?.preflight || payload || {};
+  const candidate = preflight.candidate || {};
+  const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+  const tone = preflight.status === 'ready' ? 'ready' : 'blocked';
+  const checkHtml = checks.map((check) => {
+    const status = String(check.status || 'warning');
+    const className = status === 'blocked' ? 'err' : status === 'warning' ? 'warn' : 'ok';
+    return `<div class="issue ${className}"><b>${escapeHtml(check.code || 'check')}</b>${escapeHtml(check.message || '-')}</div>`;
+  }).join('');
+  return `
+    <div class="preflight-status ${tone}">
+      <strong>${preflight.status === 'ready' ? '下载预检通过' : '下载预检阻断'}</strong>
+      <span>${escapeHtml(preflight.summary || '-')}</span>
+    </div>
+    <dl class="compact-receipt">
+      <div><dt>模板</dt><dd>${escapeHtml(candidate.title || '-')}</dd></div>
+      <div><dt>格式 / 大小</dt><dd>${escapeHtml([candidate.workForm, candidate.sizeText].filter(Boolean).join(' · ') || '-')}</dd></div>
+      <div><dt>详情页</dt><dd>${escapeHtml(preflight.detailUrl || candidate.detailUrl || '-')}</dd></div>
+      <div><dt>本机收件箱根目录</dt><dd>${escapeHtml(preflight.inboxRoot || '-')}</dd></div>
+      <div><dt>预检有效期</dt><dd>${escapeHtml(formatLocalDateTime(preflight.expiresAt))}</dd></div>
+    </dl>
+    <div class="issue-list">${checkHtml}</div>
+    ${preflight.rightsNotice ? `<div class="issue warn"><b>confirm_required</b>${escapeHtml(preflight.rightsNotice)}</div>` : ''}
   `;
 }
 
@@ -203,6 +271,7 @@ function renderStatus(payload) {
     $('cancelLoginBtn').disabled = true;
   }
   renderDesign006AuthPanel(payload.design006);
+  renderDesign006DownloadPreflightPanel(payload.design006);
   renderFeishuDefaultStatus(payload.feishu);
   renderModelRoutes(payload.models || []);
   renderPresetList();
@@ -3836,23 +3905,61 @@ $('resolveBtn').addEventListener('click', async () => {
   }
 });
 
-$('downloadBtn').addEventListener('click', async () => {
+$('preflightDesign006DownloadBtn').addEventListener('click', async () => {
   try {
-    setMessage('designResults', '下载处理中...');
-    const payload = await api('/api/design006/download', {
+    setMessage('designResults', '正在执行下载前真实预检...');
+    const payload = await api('/api/design006/download/preflight', {
       method: 'POST',
       body: JSON.stringify({ url: $('designUrl').value }),
+    });
+    state.lastDesign006DownloadPreflight = payload.preflight || null;
+    await refresh();
+    setMessage('designResults', renderDesign006DownloadPreflight(payload), 'html');
+  } catch (error) {
+    state.lastDesign006DownloadPreflight = null;
+    renderDesign006AuthPanel(state.status?.design006 || {});
+    renderDesign006DownloadPreflightPanel(state.status?.design006 || {});
+    setMessage('designResults', error.message);
+  }
+});
+
+$('downloadBtn').addEventListener('click', async () => {
+  try {
+    const preflight = state.lastDesign006DownloadPreflight;
+    if (!design006DownloadPreflightReady()) {
+      setMessage('designResults', '<div class="issue err"><b>preflight_required</b>请先通过下载前预检，再确认下载。</div>', 'html');
+      renderDesign006AuthPanel(state.status?.design006 || {});
+      renderDesign006DownloadPreflightPanel(state.status?.design006 || {});
+      return;
+    }
+    const confirmed = window.confirm('确认执行真实 design006 下载？这可能消耗积分、会员权益或下载额度；PSD/PSB 只保存到本机收件箱。');
+    if (!confirmed) return;
+    setMessage('designResults', '真实下载处理中...');
+    const payload = await api('/api/design006/download', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: $('designUrl').value,
+        preflightId: preflight.id,
+        confirm: preflight.confirm,
+      }),
     });
     if (payload.requiresLogin) {
       state.pendingId = payload.pendingId;
       $('continueLoginBtn').disabled = false;
       $('cancelLoginBtn').disabled = false;
     }
+    state.lastDesign006DownloadPreflight = null;
     setMessage('designResults', payload);
     await refresh();
   } catch (error) {
     setMessage('designResults', error.message);
   }
+});
+
+$('designUrl').addEventListener('input', () => {
+  state.lastDesign006DownloadPreflight = null;
+  renderDesign006AuthPanel(state.status?.design006 || {});
+  renderDesign006DownloadPreflightPanel({});
 });
 
 $('continueLoginBtn').addEventListener('click', async () => {

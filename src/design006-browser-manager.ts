@@ -50,8 +50,40 @@ type LoginCheckRecord = {
   browserStatus?: Record<string, unknown> | null;
 };
 
+type DownloadPreflightCheck = {
+  code: string;
+  status: 'ready' | 'blocked' | 'warning';
+  message: string;
+};
+
+type DownloadPreflightRecord = {
+  id: string;
+  status: 'ready' | 'blocked';
+  createdAt: string;
+  expiresAt: string;
+  confirm: string;
+  requiresConfirmation: true;
+  candidate: any | null;
+  detailUrl: string | null;
+  templateRoots: string[];
+  inboxRoot: string | null;
+  loginCheck: LoginCheckRecord;
+  checks: DownloadPreflightCheck[];
+  rightsNotice: string;
+  summary: string;
+};
+
+const DOWNLOAD_PREFLIGHT_TTL_MS = 10 * 60 * 1000;
+const DOWNLOAD_CONFIRM_VALUE = 'download-design006-source';
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function blockedError(message: string): Error {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = 409;
+  return error;
 }
 
 function isLoginRequired(payload: unknown): boolean {
@@ -83,6 +115,7 @@ export class Design006BrowserManager {
   private pendingLogin: PendingLogin | null = null;
   private loginWindow: LoginWindow | null = null;
   private lastLoginCheck: LoginCheckRecord | null = null;
+  private lastDownloadPreflight: DownloadPreflightRecord | null = null;
   private operation: Promise<unknown> = Promise.resolve();
 
   status(): Record<string, unknown> {
@@ -107,6 +140,16 @@ export class Design006BrowserManager {
             profileDir: this.pendingLogin.runtime.profileDir,
             detailUrl: this.pendingLogin.candidate?.detailUrl || null,
             title: this.pendingLogin.candidate?.title || null,
+          }
+        : null,
+      downloadPreflight: this.lastDownloadPreflight
+        ? {
+            id: this.lastDownloadPreflight.id,
+            status: this.lastDownloadPreflight.status,
+            createdAt: this.lastDownloadPreflight.createdAt,
+            expiresAt: this.lastDownloadPreflight.expiresAt,
+            detailUrl: this.lastDownloadPreflight.detailUrl,
+            title: this.lastDownloadPreflight.candidate?.title || null,
           }
         : null,
     };
@@ -138,19 +181,121 @@ export class Design006BrowserManager {
     });
   }
 
-  async download(input: { detailUrl?: string; candidate?: any }): Promise<Record<string, unknown>> {
+  async preflightDownload(input: { detailUrl?: string; candidate?: any }): Promise<DownloadPreflightRecord> {
     this.assertNoPendingLogin();
     return this.runExclusive(async () => {
-      await this.assertLoggedInForAction('下载 design006 模板');
-      const design006 = await loadDesign006Bridge();
+      const createdAt = nowIso();
+      const checks: DownloadPreflightCheck[] = [];
+      const loginCheck = await this.checkLoginStatus();
+      const loggedIn = loginCheck.status === 'logged_in';
+      checks.push({
+        code: 'login_status',
+        status: loggedIn ? 'ready' : 'blocked',
+        message: loginCheck.summary || 'design006 登录态未通过。',
+      });
+
       const photoshopConfig = await loadPhotoshopConfigBridge();
       const config = photoshopConfig.readPhotoshopConfig();
       const templateRoots = Array.isArray(config.templateRoots) && config.templateRoots.length > 0
         ? config.templateRoots
         : TEMPLATE_ROOTS;
+      const inboxRoot = templateRoots.find((item: string) => fs.existsSync(item)) || templateRoots[0] || null;
+      checks.push({
+        code: 'local_inbox_root',
+        status: inboxRoot ? 'ready' : 'blocked',
+        message: inboxRoot
+          ? `下载源文件将只保存到本机收件箱根目录：${path.resolve(inboxRoot)}`
+          : '未配置 Photoshop 模板根目录，无法写入本机 design006 收件箱。',
+      });
 
-      const detailUrl = String(input.detailUrl || '');
-      const candidate = input.candidate || await this.withDesign006Browser(detailUrl, async () => (
+      const rawDetailUrl = String(input.detailUrl || input.candidate?.detailUrl || '').trim();
+      let candidate = input.candidate || null;
+      if (!rawDetailUrl && !candidate) {
+        checks.push({
+          code: 'detail_url',
+          status: 'blocked',
+          message: '缺少 design006 详情页 URL 或已解析 candidate。',
+        });
+      } else if (!loggedIn) {
+        checks.push({
+          code: 'candidate_resolved',
+          status: 'blocked',
+          message: '登录态未通过，预检没有解析详情页，也没有执行下载动作。',
+        });
+      } else {
+        try {
+          const design006 = await loadDesign006Bridge();
+          candidate = candidate || await this.withDesign006Browser(rawDetailUrl, async () => (
+            design006.resolveDesign006DetailCandidate(rawDetailUrl)
+          ));
+          checks.push({
+            code: 'candidate_resolved',
+            status: candidate?.detailUrl && candidate?.workId ? 'ready' : 'blocked',
+            message: [
+              candidate?.title || 'design006 模板',
+              candidate?.workForm || '',
+              candidate?.sizeText || '',
+              candidate?.fileNumber ? `编号 ${candidate.fileNumber}` : '',
+            ].filter(Boolean).join(' · ') || '未解析到有效模板信息。',
+          });
+        } catch (error) {
+          checks.push({
+            code: 'candidate_resolved',
+            status: 'blocked',
+            message: `真实详情页解析失败：${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      }
+
+      checks.push({
+        code: 'rights_notice',
+        status: 'warning',
+        message: '预检没有调用 confirm_download、download_api 或 signed_url；确认下载后可能消耗 design006 积分、会员权益或下载额度。',
+      });
+      checks.push({
+        code: 'local_only_boundary',
+        status: 'ready',
+        message: '下载产物只进入本机 PSD 收件箱，不会发送到飞书。',
+      });
+
+      const status: DownloadPreflightRecord['status'] = checks.some((check) => check.status === 'blocked')
+        ? 'blocked'
+        : 'ready';
+      const record: DownloadPreflightRecord = {
+        id: crypto.randomUUID(),
+        status,
+        createdAt,
+        expiresAt: new Date(Date.now() + DOWNLOAD_PREFLIGHT_TTL_MS).toISOString(),
+        confirm: DOWNLOAD_CONFIRM_VALUE,
+        requiresConfirmation: true,
+        candidate,
+        detailUrl: String(candidate?.detailUrl || rawDetailUrl || '').trim() || null,
+        templateRoots,
+        inboxRoot: inboxRoot ? path.resolve(inboxRoot) : null,
+        loginCheck,
+        checks,
+        rightsNotice: '确认下载后才会触发 design006 下载确认和源文件下载动作。',
+        summary: status === 'ready'
+          ? '下载前预检通过，请确认后再执行真实下载。'
+          : '下载前预检被阻断，没有执行下载动作。',
+      };
+      this.lastDownloadPreflight = record;
+      return record;
+    });
+  }
+
+  async download(input: { detailUrl?: string; candidate?: any; preflightId?: string; confirm?: string }): Promise<Record<string, unknown>> {
+    this.assertNoPendingLogin();
+    return this.runExclusive(async () => {
+      const confirmedPreflight = this.requireConfirmedDownloadPreflight(input);
+      await this.assertLoggedInForAction('下载 design006 模板');
+      const design006 = await loadDesign006Bridge();
+      const templateRoots = confirmedPreflight.templateRoots.length > 0
+        ? confirmedPreflight.templateRoots
+        : TEMPLATE_ROOTS;
+
+      const detailUrl = String(input.detailUrl || confirmedPreflight.detailUrl || '');
+      const candidate = confirmedPreflight.candidate || input.candidate || await this.withDesign006Browser(detailUrl, async () => (
         design006.resolveDesign006DetailCandidate(detailUrl)
       ));
       const runtime = this.loginWindow?.runtime || await this.startBrowser(candidate.detailUrl || 'https://www.design006.com');
@@ -184,6 +329,7 @@ export class Design006BrowserManager {
         if (shouldCloseRuntime) await runtime.close();
         const record = buildDownloadRecord(candidate, result);
         addDownload(record);
+        this.lastDownloadPreflight = null;
         return { ok: result.status !== 'failed', candidate, result, record };
       } catch (error) {
         if (shouldCloseRuntime) await runtime.close().catch(() => undefined);
@@ -285,6 +431,32 @@ export class Design006BrowserManager {
       const detail = loginCheck.summary || 'design006 登录态未通过。';
       throw new Error(`${actionLabel} 已阻断：${detail} 请先在登录态验证分区完成登录检查。`);
     }
+  }
+
+  private requireConfirmedDownloadPreflight(input: {
+    detailUrl?: string;
+    preflightId?: string;
+    confirm?: string;
+  }): DownloadPreflightRecord {
+    const preflight = this.lastDownloadPreflight;
+    if (!preflight || preflight.id !== String(input.preflightId || '').trim()) {
+      throw blockedError('下载 design006 模板已阻断：请先运行下载前预检，并使用最新预检 ID 确认。');
+    }
+    if (preflight.status !== 'ready') {
+      throw blockedError('下载 design006 模板已阻断：最近一次下载前预检未通过。');
+    }
+    if (String(input.confirm || '').trim() !== DOWNLOAD_CONFIRM_VALUE) {
+      throw blockedError('下载 design006 模板已阻断：缺少显式确认值。');
+    }
+    const expiresAt = Date.parse(preflight.expiresAt);
+    if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+      throw blockedError('下载 design006 模板已阻断：下载前预检已过期，请重新预检。');
+    }
+    const requestedDetailUrl = String(input.detailUrl || '').trim();
+    if (requestedDetailUrl && preflight.detailUrl && requestedDetailUrl !== preflight.detailUrl) {
+      throw blockedError('下载 design006 模板已阻断：当前 URL 与最近一次预检 URL 不一致，请重新预检。');
+    }
+    return preflight;
   }
 
   private async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
