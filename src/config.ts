@@ -2,8 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnvFile } from './env.js';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+loadEnvFile(path.join(APP_ROOT, '.env.local'));
+
 export const PUBLIC_DIR = path.join(APP_ROOT, 'public');
 export const BRIDGE_ROOT = process.env.PS_AUTOMATION_BRIDGE_ROOT
   || path.join(os.homedir(), 'Desktop', '飞书Claude', 'claude-feishu-bridge');

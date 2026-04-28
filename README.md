@@ -15,6 +15,12 @@ npm run dev
 http://127.0.0.1:3498
 ```
 
+启动时会自动读取项目根目录的 `.env.local`。该文件已被 `.gitignore` 排除，只用于本机真实密钥和路径配置。可从示例复制：
+
+```bash
+cp .env.example .env.local
+```
+
 ## 本机配置
 
 控制台不会把本机模板路径、登录态、飞书目标或 token 写入仓库。
@@ -116,6 +122,12 @@ vision:
 ```
 
 当同一 Base URL 下不同模型由不同 API Key 授权时，可在路由中设置 `modelApiKeyEnvs`，只保存“模型名 -> 环境变量名”，不保存密钥原文。
+
+UI 的“模型专用 Key Env”支持每行一个映射：
+
+```text
+gpt-5.5=GPT55_FLASH_API_KEY
+```
 
 `/api/models/image/generate` 会先尝试 OpenAI-compatible `/v1/images/generations`。如果真实 provider 的图像模型走 chat 形态，会再尝试 `/v1/chat/completions` 并从返回的 base64 或图片 URL 提取真实图片字节。只有图片魔数校验通过并落盘到 `~/.codex/ps-automation/model-artifacts/image`，才返回 `generated`。
 

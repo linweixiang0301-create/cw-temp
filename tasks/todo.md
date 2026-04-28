@@ -1,3 +1,60 @@
+# 2026-04-28 任务 — vision 双凭据生产化闭环 1-3 项
+
+## 目标
+- 补齐本地 `.env.local` 密钥启动闭环：服务启动时自动读取本机密钥文件，仓库只保留 `.env.example`。
+- UI 支持编辑模型专用 Key Env，便于维护 `gpt-5.5 -> GPT55_FLASH_API_KEY` 这类同端口不同凭据配置。
+- 真实演练 vision 主备 fallback：主模型不可用时自动落到 `gpt-5.5`，失败仍非阻断，不影响 PS + 飞书主链路。
+
+## 计划
+- [x] 实现 `.env.local` 自动加载，兼容 `KEY=value`、`export KEY=value` 和引号。
+- [x] 新增 `.env.example`，列出真实需要的环境变量名但不包含密钥。
+- [x] UI 模型路由配置新增 `modelApiKeyEnvs` 可编辑输入，保存时解析为模型名到环境变量名。
+- [x] 更新 README 启动和模型路由说明。
+- [x] 写入本机 `.env.local` 所需真实密钥，确认文件被 gitignore 排除。
+- [x] 重启服务，验证从 `.env.local` 加载后主备 live probe ready。
+- [x] 临时模拟主模型不可用，真实调用 vision QA，确认自动 fallback 到 `gpt-5.5`；随后恢复生产路由。
+- [x] 运行检查、记录回顾并推送远端。
+
+## 回顾
+- 新增本地 `.env.local` 自动加载：
+  - 启动时由 `src/config.ts` 最早调用 `loadEnvFile(APP_ROOT/.env.local)`。
+  - 支持 `KEY=value`、`export KEY=value`、单双引号和行尾注释。
+  - 不覆盖已存在的进程环境变量。
+- 新增 `.env.example`，只列出变量名和空值，不包含任何密钥：
+  - `GEMINI_TUZI_API_KEY`
+  - `GEMINI_FLASH_API_KEY`
+  - `GPT55_FLASH_API_KEY`
+  - 飞书目标和本机路径变量。
+- 已写入本机 `.env.local`：
+  - 包含真实 `GEMINI_TUZI_API_KEY`、`GEMINI_FLASH_API_KEY`、`GPT55_FLASH_API_KEY`。
+  - `git check-ignore .env.local` 确认被忽略。
+  - 仓库扫描未发现 `sk-...` 明文。
+- UI 模型路由配置已新增“模型专用 Key Env”输入：
+  - 每行格式：`model=ENV_NAME`
+  - 当前用于 `gpt-5.5=GPT55_FLASH_API_KEY`
+  - 保存时解析为 `modelApiKeyEnvs`，仍只保存环境变量名，不保存密钥。
+- README 已补充 `.env.local` 启动说明、`.env.example` 复制方式和 UI 编辑格式。
+- 使用去掉进程里 3 个 provider key 的干净环境重启服务，验证 `.env.local` 自动加载成功：
+  - image route ready：`gpt-image-2` + `gemini-3-pro-image-preview-4k`
+  - vision route ready：`gemini-3-flash-preview` + `gpt-5.5`
+- 真实 live probe：
+  - image matched：`gpt-image-2`、`gemini-3-pro-image-preview-4k`
+  - vision matched：`gemini-3-flash-preview`、`gpt-5.5`
+  - findings 均为空。
+- 真实 fallback 演练：
+  - 临时把 vision 主模型改为 `gemini-3-flash-preview-unavailable-rehearsal`，备选保持 `gpt-5.5`。
+  - 调用真实当前 `final.png`：`/Users/a1234/Desktop/飞书Claude/claude-feishu-bridge/.runtime/bridge-state/photoshop-jobs/running/photoshop-be946f18-7e54-497c-9548-483d2ea4c85b/final.png`
+  - API 返回 `completed`，实际命中 `gpt-5.5`，耗时约 `22.1s`，确认自动 fallback 成功。
+  - 随后恢复生产 vision 路由：`gemini-3-flash-preview` + `gpt-5.5`。
+- 额外指定 `modelId=gpt-5.5` 调用成功，耗时约 `12.4s`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/regression/model-routing` 返回 `ready`
+  - `/app.js` 已包含 `modelRouteModelApiKeyEnvs`、`parseModelApiKeyEnvs` 和“模型专用 Key Env”。
+- 本轮未发送飞书消息，未外发 PSD。
+
 # 2026-04-28 任务 — vision 主备双凭据路由接入
 
 ## 目标

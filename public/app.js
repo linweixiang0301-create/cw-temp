@@ -211,6 +211,33 @@ function routeCredentialOverrideText(route) {
   return `模型专用 Key ${pairs.map(([model, envName]) => `${model}:${envName}`).join(' · ')}`;
 }
 
+function formatModelApiKeyEnvs(overrides) {
+  if (!overrides || typeof overrides !== 'object') return '';
+  return Object.entries(overrides)
+    .filter(([model, envName]) => String(model || '').trim() && String(envName || '').trim())
+    .map(([model, envName]) => `${model}=${envName}`)
+    .join('\n');
+}
+
+function parseModelApiKeyEnvs(text) {
+  const result = {};
+  String(text || '').split(/\r?\n/).forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) return;
+    const separatorIndex = line.includes('=') ? line.indexOf('=') : line.indexOf(':');
+    if (separatorIndex <= 0) {
+      throw new Error(`模型专用 Key Env 第 ${index + 1} 行格式应为 model=ENV_NAME`);
+    }
+    const model = line.slice(0, separatorIndex).trim();
+    const envName = line.slice(separatorIndex + 1).trim();
+    if (!model || !envName) {
+      throw new Error(`模型专用 Key Env 第 ${index + 1} 行缺少模型名或环境变量名`);
+    }
+    result[model] = envName;
+  });
+  return result;
+}
+
 function modelRouteConfigRoute() {
   return modelRoute(state.modelRouteConfigKey) || { key: state.modelRouteConfigKey, provider: 'openai-compatible' };
 }
@@ -261,6 +288,10 @@ function renderModelRouteConfigForm() {
       <label class="field tight">
         <span>API Key Env</span>
         <input id="modelRouteApiKeyEnv" value="${escapeHtml(route.apiKeyEnv || '')}" placeholder="OPENAI_API_KEY">
+      </label>
+      <label class="field tight">
+        <span>模型专用 Key Env</span>
+        <textarea id="modelRouteModelApiKeyEnvs" rows="3" placeholder="gpt-5.5=GPT55_FLASH_API_KEY">${escapeHtml(formatModelApiKeyEnvs(route.modelApiKeyEnvs))}</textarea>
       </label>
       <label class="field tight">
         <span>来源备注</span>
@@ -353,7 +384,7 @@ async function saveModelRouteConfig() {
       source: $('modelRouteSource').value.trim(),
       baseUrl: $('modelRouteBaseUrl').value.trim(),
       apiKeyEnv: $('modelRouteApiKeyEnv').value.trim(),
-      modelApiKeyEnvs: modelRouteConfigRoute().modelApiKeyEnvs || {},
+      modelApiKeyEnvs: parseModelApiKeyEnvs($('modelRouteModelApiKeyEnvs').value),
       enabled: $('modelRouteEnabled').checked,
     }),
   });
