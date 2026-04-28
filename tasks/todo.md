@@ -66,7 +66,7 @@
 - 已推送远端 main：
   - `e28b2d83d1b541668f7a68fe722eb21e8e5f6903` — `Add smart PSD rebuild upload flow`
 - 远端 fresh clone 回归：
-  - clone HEAD：`e28b2d83d1b541668f7a68fe722eb21e8e5f6903`
+  - clone HEAD：`a42df19ed3377566ce3f47b7d32280900d753dd1`
   - `npm ci` 通过
   - `npm run check` 通过
   - `node --check public/app.js` 通过
