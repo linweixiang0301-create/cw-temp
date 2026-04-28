@@ -122,6 +122,7 @@ export type ModelRouteRecord = {
   source?: string | null;
   baseUrl?: string | null;
   apiKeyEnv?: string | null;
+  modelApiKeyEnvs?: Record<string, string>;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -446,6 +447,12 @@ function normalizeModelRoute(record: ModelRouteRecord): ModelRouteRecord | null 
   const primary = String(record.primary || '').trim();
   if (!isModelRouteKey(key) || !isModelRouteProvider(provider) || !primary) return null;
   const now = new Date().toISOString();
+  const modelApiKeyEnvs = Object.entries(record.modelApiKeyEnvs || {}).reduce<Record<string, string>>((acc, [model, envName]) => {
+    const normalizedModel = String(model || '').trim();
+    const normalizedEnvName = String(envName || '').trim();
+    if (normalizedModel && normalizedEnvName) acc[normalizedModel] = normalizedEnvName;
+    return acc;
+  }, {});
   return {
     key,
     provider,
@@ -454,6 +461,7 @@ function normalizeModelRoute(record: ModelRouteRecord): ModelRouteRecord | null 
     source: record.source ? String(record.source).trim() : null,
     baseUrl: record.baseUrl ? String(record.baseUrl).trim() : null,
     apiKeyEnv: record.apiKeyEnv ? String(record.apiKeyEnv).trim() : null,
+    modelApiKeyEnvs,
     enabled: record.enabled !== false,
     createdAt: record.createdAt || now,
     updatedAt: record.updatedAt || now,
@@ -474,6 +482,7 @@ export function saveModelRoute(input: {
   source?: string | null;
   baseUrl?: string | null;
   apiKeyEnv?: string | null;
+  modelApiKeyEnvs?: Record<string, string> | null;
   enabled?: boolean;
 }): ModelRouteRecord {
   const primary = input.primary.trim();
@@ -489,6 +498,7 @@ export function saveModelRoute(input: {
     source: input.source?.trim() || null,
     baseUrl: input.baseUrl?.trim() || null,
     apiKeyEnv: input.apiKeyEnv?.trim() || null,
+    modelApiKeyEnvs: input.modelApiKeyEnvs || {},
     enabled: input.enabled !== false,
     createdAt: existing?.createdAt || now,
     updatedAt: now,

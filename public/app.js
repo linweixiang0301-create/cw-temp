@@ -204,6 +204,13 @@ function routeFindingHtml(route) {
   )).join('')}</div>`;
 }
 
+function routeCredentialOverrideText(route) {
+  const overrides = route?.modelApiKeyEnvs && typeof route.modelApiKeyEnvs === 'object' ? route.modelApiKeyEnvs : {};
+  const pairs = Object.entries(overrides).filter(([, envName]) => String(envName || '').trim());
+  if (pairs.length === 0) return '';
+  return `模型专用 Key ${pairs.map(([model, envName]) => `${model}:${envName}`).join(' · ')}`;
+}
+
 function modelRouteConfigRoute() {
   return modelRoute(state.modelRouteConfigKey) || { key: state.modelRouteConfigKey, provider: 'openai-compatible' };
 }
@@ -316,6 +323,7 @@ function renderModelRoutes(models) {
         </div>
         <small>备选 ${escapeHtml(route.fallback || '未选择')} · 来源 ${escapeHtml(route.sourceKind || route.source || '-')}</small>
         <small>${escapeHtml(route.provider || '-')} · ${escapeHtml(route.baseUrl || 'Base URL 未设')}</small>
+        ${routeCredentialOverrideText(route) ? `<small>${escapeHtml(routeCredentialOverrideText(route))}</small>` : ''}
         ${routeFindingHtml(route)}
       </div>
     `),
@@ -345,6 +353,7 @@ async function saveModelRouteConfig() {
       source: $('modelRouteSource').value.trim(),
       baseUrl: $('modelRouteBaseUrl').value.trim(),
       apiKeyEnv: $('modelRouteApiKeyEnv').value.trim(),
+      modelApiKeyEnvs: modelRouteConfigRoute().modelApiKeyEnvs || {},
       enabled: $('modelRouteEnabled').checked,
     }),
   });

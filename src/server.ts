@@ -1019,6 +1019,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         source?: string | null;
         baseUrl?: string | null;
         apiKeyEnv?: string | null;
+        modelApiKeyEnvs?: Record<string, string> | null;
         enabled?: boolean;
       }>(req);
       const key = String(body.key || '').trim();
@@ -1035,6 +1036,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         source: body.source,
         baseUrl: body.baseUrl,
         apiKeyEnv: body.apiKeyEnv,
+        modelApiKeyEnvs: body.modelApiKeyEnvs,
         enabled: body.enabled !== false,
       });
       sendJson(res, 200, {

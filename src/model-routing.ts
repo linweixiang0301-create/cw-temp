@@ -28,6 +28,7 @@ export type ResolvedModelRoute = {
   provider: ModelRouteProvider | null;
   baseUrl: string | null;
   apiKeyEnv: string | null;
+  modelApiKeyEnvs: Record<string, string>;
   models: string[];
   findings: Array<{ code: string; message: string; severity: 'info' | 'warning' | 'error' }>;
 };
@@ -120,6 +121,7 @@ function envRoute(meta: RouteMeta): ModelRouteRecord | null {
     baseUrl: envValue(`${meta.envPrefix}_BASE_URL`),
     apiKeyEnv: envValue(`${meta.envPrefix}_API_KEY_ENV`)
       || (envValue(`${meta.envPrefix}_API_KEY`) ? `${meta.envPrefix}_API_KEY` : null),
+    modelApiKeyEnvs: {},
     enabled: true,
     createdAt: now,
     updatedAt: now,
@@ -145,10 +147,16 @@ function likelyNeedsApiKey(baseUrl: string | null): boolean {
   return /openai\.com|api\./i.test(baseUrl);
 }
 
-function credentialForRoute(route: ResolvedModelRoute): { apiKey: string | null; apiKeyEnv: string | null } {
+function modelApiKeyEnvForRoute(route: ResolvedModelRoute, model?: string | null): string | null {
+  const modelName = String(model || '').trim();
+  return (modelName && route.modelApiKeyEnvs[modelName]) || route.apiKeyEnv || null;
+}
+
+function credentialForRoute(route: ResolvedModelRoute, model?: string | null): { apiKey: string | null; apiKeyEnv: string | null } {
   const meta = routeMeta(route.key);
+  const modelApiKeyEnv = modelApiKeyEnvForRoute(route, model);
   const candidates = [
-    route.apiKeyEnv,
+    modelApiKeyEnv,
     `${meta.envPrefix}_API_KEY`,
     route.baseUrl?.includes('openai.com') ? 'OPENAI_API_KEY' : '',
   ].filter(Boolean) as string[];
@@ -156,7 +164,7 @@ function credentialForRoute(route: ResolvedModelRoute): { apiKey: string | null;
     const value = envValue(name);
     if (value) return { apiKey: value, apiKeyEnv: name };
   }
-  return { apiKey: null, apiKeyEnv: route.apiKeyEnv || null };
+  return { apiKey: null, apiKeyEnv: modelApiKeyEnv || route.apiKeyEnv || null };
 }
 
 function findingsForRoute(route: ResolvedModelRoute): ResolvedModelRoute['findings'] {
@@ -170,7 +178,7 @@ function findingsForRoute(route: ResolvedModelRoute): ResolvedModelRoute['findin
   if ((route.key === 'image' || route.key === 'vision') && !route.baseUrl) {
     findings.push({ code: 'base_url_missing', severity: 'error', message: '真实模型调用需要 OpenAI-compatible Base URL。' });
   }
-  const credential = credentialForRoute(route);
+  const credential = credentialForRoute(route, route.primary);
   if (likelyNeedsApiKey(route.baseUrl) && !credential.apiKey) {
     findings.push({
       code: 'api_key_missing',
@@ -183,6 +191,15 @@ function findingsForRoute(route: ResolvedModelRoute): ResolvedModelRoute['findin
       code: 'api_key_env_missing',
       severity: 'warning',
       message: `未读取到环境变量 ${route.apiKeyEnv}，真实调用可能失败。`,
+    });
+  }
+  const missingModelCredentialEnvs = Object.entries(route.modelApiKeyEnvs)
+    .filter(([, envName]) => !envValue(envName));
+  for (const [model, envName] of missingModelCredentialEnvs) {
+    findings.push({
+      code: 'model_api_key_env_missing',
+      severity: 'warning',
+      message: `${model} 指定的环境变量 ${envName} 未读取到，调用该模型时会失败并回退。`,
     });
   }
   return findings;
@@ -206,6 +223,7 @@ function resolveRoute(meta: RouteMeta): ResolvedModelRoute {
     provider: record?.provider || null,
     baseUrl: record?.baseUrl || null,
     apiKeyEnv: record?.apiKeyEnv || null,
+    modelApiKeyEnvs: record?.modelApiKeyEnvs || {},
     models: routeModels(record),
     findings: [],
   };
@@ -232,8 +250,8 @@ function endpointFor(route: ResolvedModelRoute, suffix: string): string {
   return baseUrl.endsWith('/v1') ? `${baseUrl}${normalizedSuffix}` : `${baseUrl}/v1${normalizedSuffix}`;
 }
 
-function headersFor(route: ResolvedModelRoute): Record<string, string> {
-  const credential = credentialForRoute(route);
+function headersFor(route: ResolvedModelRoute, model?: string | null): Record<string, string> {
+  const credential = credentialForRoute(route, model);
   return {
     'Content-Type': 'application/json',
     ...(credential.apiKey ? { Authorization: `Bearer ${credential.apiKey}` } : {}),
@@ -349,26 +367,67 @@ async function probeOneRoute(route: ResolvedModelRoute): Promise<ModelRouteProbe
   }
 
   try {
-    const response = await fetchJsonGetWithTimeout(endpoint, headersFor(route));
-    const providerModels = modelIdsFromPayload(response.payload);
-    const matchedModels = configuredModels.filter((model) => providerModels.includes(model));
-    const missingModels = providerModels.length > 0
-      ? configuredModels.filter((model) => !providerModels.includes(model))
-      : [];
+    const uniqueCredentialEnvs = [...new Set(configuredModels.map((model) => credentialForRoute(route, model).apiKeyEnv || '__none__'))];
+    const credentialProbes: Array<{ apiKeyEnv: string; latencyMs: number | null; models: string[]; error: string | null }> = await Promise.all(uniqueCredentialEnvs.map(async (apiKeyEnv) => {
+      const modelForCredential = configuredModels.find((model) => (credentialForRoute(route, model).apiKeyEnv || '__none__') === apiKeyEnv);
+      try {
+        const response = await fetchJsonGetWithTimeout(endpoint, headersFor(route, modelForCredential));
+        return {
+          apiKeyEnv,
+          latencyMs: response.latencyMs,
+          models: modelIdsFromPayload(response.payload),
+          error: null,
+        };
+      } catch (error) {
+        return {
+          apiKeyEnv,
+          latencyMs: null,
+          models: [],
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }));
+    const primaryCredentialEnv = credentialForRoute(route, route.primary).apiKeyEnv || '__none__';
+    const primaryProbe = credentialProbes.find((probe) => probe.apiKeyEnv === primaryCredentialEnv);
+    if (primaryProbe?.error) {
+      return {
+        ...base,
+        status: 'blocked',
+        endpoint,
+        findings: [{
+          code: 'provider_probe_failed',
+          severity: 'error',
+          message: primaryProbe.error,
+        }],
+        error: primaryProbe.error,
+      };
+    }
+    const matchedModels = configuredModels.filter((model) => {
+      const apiKeyEnv = credentialForRoute(route, model).apiKeyEnv || '__none__';
+      return credentialProbes.find((probe) => probe.apiKeyEnv === apiKeyEnv)?.models.includes(model);
+    });
+    const missingModels = configuredModels.filter((model) => !matchedModels.includes(model));
+    const failedFallbackCredentials = credentialProbes.filter((probe) => probe.error && probe.apiKeyEnv !== primaryCredentialEnv);
+    const latencies = credentialProbes.map((probe) => probe.latencyMs).filter((latency): latency is number => typeof latency === 'number');
     return {
       ...base,
       status: 'ready',
       endpoint,
-      latencyMs: response.latencyMs,
-      modelCount: providerModels.length,
+      latencyMs: latencies.length ? Math.max(...latencies) : null,
+      modelCount: [...new Set(credentialProbes.flatMap((probe) => probe.models))].length,
       matchedModels,
-      findings: missingModels.length
-        ? [{
+      findings: [
+        ...failedFallbackCredentials.map((probe) => ({
+          code: 'fallback_provider_probe_failed',
+          severity: 'warning' as const,
+          message: `备选模型凭据 ${probe.apiKeyEnv} 连通性检查失败：${probe.error}`,
+        })),
+        ...(missingModels.length ? [{
             code: 'configured_model_not_listed',
-            severity: 'warning',
+            severity: 'warning' as const,
             message: `provider 可连通，但未在 /v1/models 返回中看到：${missingModels.join(', ')}`,
-          }]
-        : [],
+          }] : []),
+      ],
     };
   } catch (error) {
     return {
@@ -405,7 +464,7 @@ async function callModels(
       return {
         model,
         route,
-        response: await fetchJsonWithTimeout(request.endpoint, request.payload, headersFor(route)),
+        response: await fetchJsonWithTimeout(request.endpoint, request.payload, headersFor(route, model)),
       };
     } catch (error) {
       failures.push({ model, error: error instanceof Error ? error.message : String(error) });
@@ -522,7 +581,7 @@ async function callImageGenerationModels(
 
     for (const attempt of attempts) {
       try {
-        const response = await fetchJsonWithTimeout(attempt.endpoint, attempt.payload, headersFor(route));
+        const response = await fetchJsonWithTimeout(attempt.endpoint, attempt.payload, headersFor(route, model));
         const image = await extractGeneratedImage(response);
         return {
           model,

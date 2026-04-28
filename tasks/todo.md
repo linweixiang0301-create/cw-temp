@@ -1,3 +1,49 @@
+# 2026-04-28 任务 — vision 主备双凭据路由接入
+
+## 目标
+- 按用户确认配置 vision 路由：优选 `gemini-3-flash-preview`，备选 `gpt-5.5`。
+- 支持同一 Base URL 下不同模型使用不同 API Key 环境变量。
+- 只保存环境变量名，不保存密钥原文；失败仍走 `manual_review`，不阻断 PS + 飞书主链路。
+
+## 计划
+- [x] 扩展本地模型路由 state，支持 `modelApiKeyEnvs`。
+- [x] 模型调用、live probe 和路由 findings 改为按模型解析 API Key。
+- [x] 保存 vision 路由：主模型走 `GEMINI_FLASH_API_KEY`，`gpt-5.5` 走 `GPT55_FLASH_API_KEY`。
+- [x] 重启服务并注入临时 `GPT55_FLASH_API_KEY` 环境变量。
+- [x] 真实验证主模型与备选模型均可 vision QA。
+- [x] 运行检查、记录回顾并推送远端。
+
+## 回顾
+- 已新增模型专用 API Key 环境变量映射：`modelApiKeyEnvs`，只保存模型名到环境变量名的映射，不保存密钥原文。
+- 路由解析、模型调用和 live probe 已改为按模型选择凭据：
+  - 默认 `apiKeyEnv` 继续服务主模型和普通路由。
+  - 若某个模型在 `modelApiKeyEnvs` 中有专用 env，则调用该模型时使用专用 env。
+  - live probe 会按不同凭据分别请求 `/v1/models`，再合并匹配结果。
+- 当前生产 vision 路由已保存为：
+  - 优选：`gemini-3-flash-preview`
+  - 备选：`gpt-5.5`
+  - provider：`https://ai.flashapi.top`
+  - apiKeyEnv：`GEMINI_FLASH_API_KEY`
+  - modelApiKeyEnvs：`gpt-5.5 -> GPT55_FLASH_API_KEY`
+  - source：`flashapi-vision-dual-credential`
+- 已用当前服务进程临时注入 `GPT55_FLASH_API_KEY`；该密钥未写入仓库、README、任务记录或 runtime state。后续若服务重启，需要重新把 `GPT55_FLASH_API_KEY` 注入进程环境。
+- 真实 live probe：
+  - configuredModels：`gemini-3-flash-preview`、`gpt-5.5`
+  - matchedModels：`gemini-3-flash-preview`、`gpt-5.5`
+  - status：`ready`
+  - modelCount：`4`
+  - findings：无
+- 使用当前真实 `final.png` 分别调用控制台 `/api/models/vision/qa`：
+  - `gemini-3-flash-preview`：真实命中，`completed`，耗时约 `13.0s`。
+  - `gpt-5.5`：真实命中，`completed`，耗时约 `17.3s`。
+- 审计记录已增加到 `19` 条，最新两条 vision QA 分别为 `gpt-5.5 completed` 和 `gemini-3-flash-preview completed`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/regression/model-routing` 返回 `ready`
+- 本轮未发送飞书消息，未外发 PSD。
+
 # 2026-04-28 任务 — vision provider gpt-5.5 候选实测
 
 ## 目标

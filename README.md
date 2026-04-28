@@ -103,15 +103,19 @@ export PS_AUTOMATION_FEISHU_USER_ID=ou_xxx
 image:
   baseUrl: https://api.tu-zi.com/v1
   apiKeyEnv: GEMINI_TUZI_API_KEY
-  primary: gemini-3-pro-image-preview-4k
-  fallback: gemini-3-pro-image-preview-vip
+  primary: gpt-image-2
+  fallback: gemini-3-pro-image-preview-4k
 
 vision:
   baseUrl: https://ai.flashapi.top
   apiKeyEnv: GEMINI_FLASH_API_KEY
   primary: gemini-3-flash-preview
-  fallback: gemini-3-pro-preview
+  fallback: gpt-5.5
+  modelApiKeyEnvs:
+    gpt-5.5: GPT55_FLASH_API_KEY
 ```
+
+当同一 Base URL 下不同模型由不同 API Key 授权时，可在路由中设置 `modelApiKeyEnvs`，只保存“模型名 -> 环境变量名”，不保存密钥原文。
 
 `/api/models/image/generate` 会先尝试 OpenAI-compatible `/v1/images/generations`。如果真实 provider 的图像模型走 chat 形态，会再尝试 `/v1/chat/completions` 并从返回的 base64 或图片 URL 提取真实图片字节。只有图片魔数校验通过并落盘到 `~/.codex/ps-automation/model-artifacts/image`，才返回 `generated`。
 
