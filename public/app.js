@@ -9,8 +9,11 @@ const state = {
   feishuTargets: [],
   feishuSendHistory: [],
   modelRoutes: [],
+  modelUsageHistory: [],
   modelRouteConfigKey: 'image',
   lastModelPreflight: null,
+  lastModelProbe: null,
+  modelRoutingRegression: null,
   lastVisionQa: null,
   expandedSendHistoryId: '',
   lastFeishuPreflight: null,
@@ -116,6 +119,7 @@ function renderStatus(payload) {
   state.feishuTargets = Array.isArray(payload.feishuTargets) ? payload.feishuTargets : [];
   state.feishuSendHistory = Array.isArray(payload.feishuSendHistory) ? payload.feishuSendHistory : [];
   state.modelRoutes = Array.isArray(payload.models) ? payload.models : [];
+  state.modelUsageHistory = Array.isArray(payload.modelUsageHistory) ? payload.modelUsageHistory : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -262,8 +266,15 @@ function renderModelRouteConfigForm() {
       <div class="button-row stretch model-route-buttons">
         <button id="saveModelRouteBtn" type="button" class="secondary">保存路由</button>
         <button id="preflightModelRoutesBtn" type="button" class="secondary">预检模型</button>
+        <button id="probeModelRoutesBtn" type="button" class="secondary">连通性检查</button>
+        <button id="modelRoutingRegressionBtn" type="button" class="secondary">模型回归</button>
       </div>
       <div id="modelRouteResults" class="model-route-results"></div>
+      <div class="model-usage-head">
+        <strong>模型使用记录</strong>
+        <button id="refreshModelUsageHistoryBtn" type="button" class="secondary small">刷新</button>
+      </div>
+      <div id="modelUsageHistory" class="model-usage-history"></div>
     </details>
   `;
 }
@@ -277,6 +288,15 @@ function bindModelRouteControls() {
     setMessage('modelRouteResults', error.payload || error.message);
   }));
   $('preflightModelRoutesBtn')?.addEventListener('click', () => preflightModelRoutes().catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
+  $('probeModelRoutesBtn')?.addEventListener('click', () => probeModelRoutesLive().catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
+  $('modelRoutingRegressionBtn')?.addEventListener('click', () => runModelRoutingRegression().catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
+  $('refreshModelUsageHistoryBtn')?.addEventListener('click', () => refreshModelUsageHistory().catch((error) => {
     setMessage('modelRouteResults', error.payload || error.message);
   }));
 }
@@ -302,6 +322,7 @@ function renderModelRoutes(models) {
     renderModelRouteConfigForm(),
   ].join('');
   bindModelRouteControls();
+  renderModelUsageHistory();
 }
 
 async function refreshModelRoutes() {
@@ -354,6 +375,91 @@ async function preflightModelRoutes() {
   `).join('');
   setMessage('modelRouteResults', rows || '<div class="muted">没有模型路由。</div>', 'html');
   return payload;
+}
+
+function probeTone(status) {
+  if (status === 'ready') return 'ready';
+  if (status === 'blocked') return 'blocked';
+  return 'warning';
+}
+
+function renderProbeResults(probes) {
+  return (Array.isArray(probes) ? probes : []).map((probe) => `
+    <div class="model-route ${probeTone(probe.status)}">
+      <strong>${escapeHtml(probe.label || probe.key || '-')}</strong>
+      <span>${escapeHtml(probe.status || '-')} · ${probe.latencyMs ? `${escapeHtml(probe.latencyMs)}ms` : 'no request'}</span>
+      <small>${escapeHtml(probe.endpoint || '未请求 provider')}</small>
+      <small>models ${escapeHtml(probe.modelCount ?? '-')} · matched ${escapeHtml((probe.matchedModels || []).join(', ') || '-')}</small>
+      ${routeFindingHtml(probe)}
+    </div>
+  `).join('');
+}
+
+async function probeModelRoutesLive() {
+  const payload = await api('/api/model-routes/live-probe', { method: 'POST', body: '{}' });
+  state.lastModelProbe = payload;
+  setMessage('modelRouteResults', `
+    <div class="preflight-status ${Array.isArray(payload.probes) && payload.probes.some((probe) => probe.status === 'blocked') ? 'blocked' : 'ready'}">
+      <strong>模型 provider 连通性检查</strong>
+      <span>${escapeHtml(formatLocalDateTime(payload.generatedAt))}</span>
+    </div>
+    ${renderProbeResults(payload.probes)}
+  `, 'html');
+  return payload;
+}
+
+function renderModelUsageHistory(records = state.modelUsageHistory) {
+  const el = $('modelUsageHistory');
+  if (!el) return;
+  if (!Array.isArray(records) || records.length === 0) {
+    el.innerHTML = '<div class="muted">尚无模型调用记录；首次生图或质检后会写入。</div>';
+    return;
+  }
+  el.innerHTML = records.slice(0, 8).map((record) => {
+    const artifactPath = record.artifact?.path || record.artifact?.metadataPath || '';
+    const fallback = record.fallback?.reason || record.error || '';
+    const detail = artifactPath || fallback || record.input?.imagePath || record.input?.promptPreview || '-';
+    return `
+      <div class="model-usage-card ${escapeHtml(record.status || 'fallback')}">
+        <strong>${escapeHtml(record.operation || '-')} · ${escapeHtml(record.status || '-')}</strong>
+        <span>${escapeHtml(record.routeKey || '-')} · ${escapeHtml(record.model || '未选择模型')} · ${escapeHtml(formatLocalDateTime(record.createdAt))}</span>
+        <small>${escapeHtml(detail)}</small>
+        <small>${escapeHtml(record.durationMs ? `${record.durationMs}ms` : '-')} · ${record.nonBlocking ? '不阻断主链路' : '可能阻断'}</small>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshModelUsageHistory() {
+  const payload = await api('/api/model-routes/usage-history');
+  state.modelUsageHistory = Array.isArray(payload.history) ? payload.history : [];
+  renderModelUsageHistory();
+  return state.modelUsageHistory;
+}
+
+function renderModelRoutingRegression(report) {
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  return `
+    <div class="preflight-status ${report?.status === 'blocked' ? 'blocked' : 'ready'}">
+      <strong>模型路由回归检查</strong>
+      <span>${escapeHtml(report?.status || '-')} · ${escapeHtml(formatLocalDateTime(report?.generatedAt))}</span>
+    </div>
+    <div class="regression-checks">
+      ${checks.map((check) => `
+        <div class="regression-check ${escapeHtml(check.status || 'warning')}">
+          <strong>${escapeHtml(check.code || '-')}</strong>
+          <span>${escapeHtml(check.message || '-')}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function runModelRoutingRegression() {
+  const payload = await api('/api/regression/model-routing');
+  state.modelRoutingRegression = payload.regression || null;
+  setMessage('modelRouteResults', renderModelRoutingRegression(state.modelRoutingRegression), 'html');
+  return state.modelRoutingRegression;
 }
 
 function renderCandidates(candidates) {
@@ -1338,6 +1444,7 @@ async function requestImageGeneration({ prompt, modelId, slotKey, resultId = 'pr
     }),
   });
   renderImageGenerationResult(payload, resultId);
+  await refreshModelUsageHistory().catch(() => {});
   return payload;
 }
 
@@ -3208,6 +3315,7 @@ async function runVisionQa() {
       }),
     });
     renderVisionQaResult(payload);
+    await refreshModelUsageHistory().catch(() => {});
     return payload;
   } finally {
     if (button) {

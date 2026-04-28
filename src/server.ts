@@ -5,7 +5,7 @@ import { DEFAULT_HOST, DEFAULT_PORT, MANIFEST_DISCOVERY_ROOTS, PUBLIC_DIR, ensur
 import { Design006BrowserManager } from './design006-browser-manager.js';
 import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './feishu-output.js';
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
-import { generateImageArtifact, getResolvedModelRoute, getResolvedModelRoutes, runVisionQualityCheck } from './model-routing.js';
+import { generateImageArtifact, getResolvedModelRoute, getResolvedModelRoutes, probeModelRoutes, runVisionQualityCheck } from './model-routing.js';
 import {
   confirmFinalExport,
   getPhotoshopJobArtifactCenter,
@@ -17,10 +17,12 @@ import {
 } from './photoshop-service.js';
 import {
   addFeishuSendRecord,
+  addModelUsageRecord,
   deleteDerivedTarget,
   deleteFeishuTarget,
   deletePreset,
   listFeishuSendHistory,
+  listModelUsageHistory,
   listModelRoutes,
   listFeishuTargets,
   listDerivedTargets,
@@ -587,6 +589,174 @@ async function feishuOutputRegressionPayload(): Promise<Record<string, unknown>>
   };
 }
 
+function previewText(value: unknown, limit = 160): string | null {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, limit) : null;
+}
+
+function safeAddModelUsageRecord(input: Parameters<typeof addModelUsageRecord>[0]): void {
+  try {
+    addModelUsageRecord(input);
+  } catch (error) {
+    console.warn('[model-routing:audit]', safeError(error));
+  }
+}
+
+function recordModelImageSuccess(body: Record<string, unknown>, result: Record<string, unknown>, durationMs: number): void {
+  const route = getResolvedModelRoute('image');
+  const artifact = (result.artifact || {}) as Record<string, any>;
+  safeAddModelUsageRecord({
+    operation: 'image.generate',
+    routeKey: 'image',
+    status: 'generated',
+    model: String(artifact.model || body.modelId || route.primary || '').trim() || null,
+    provider: route.provider,
+    sourceKind: route.sourceKind,
+    durationMs,
+    input: {
+      promptPreview: previewText(body.prompt),
+      slotKey: previewText(body.slotKey, 80),
+      requestedModel: previewText(body.modelId, 120),
+    },
+    artifact: {
+      path: artifact.outputPath || null,
+      metadataPath: artifact.metadataPath || null,
+      sizeBytes: typeof artifact.sizeBytes === 'number' ? artifact.sizeBytes : null,
+      mime: artifact.mime || null,
+    },
+    nonBlocking: true,
+  });
+}
+
+function recordModelImageFallback(body: Record<string, unknown>, error: unknown, durationMs: number): void {
+  const route = getResolvedModelRoute('image');
+  safeAddModelUsageRecord({
+    operation: 'image.generate',
+    routeKey: 'image',
+    status: 'fallback',
+    model: previewText(body.modelId, 120),
+    provider: route.provider,
+    sourceKind: route.sourceKind,
+    durationMs,
+    input: {
+      promptPreview: previewText(body.prompt),
+      slotKey: previewText(body.slotKey, 80),
+      requestedModel: previewText(body.modelId, 120),
+    },
+    fallback: {
+      mode: 'manual_file',
+      reason: safeError(error),
+    },
+    findings: route.findings,
+    error: safeError(error),
+    nonBlocking: true,
+  });
+}
+
+function recordModelVisionSuccess(body: Record<string, unknown>, result: Record<string, unknown>, durationMs: number): void {
+  const route = getResolvedModelRoute('vision');
+  const qa = (result.qa || {}) as Record<string, any>;
+  safeAddModelUsageRecord({
+    operation: 'vision.qa',
+    routeKey: 'vision',
+    status: 'completed',
+    model: String(qa.model || body.modelId || route.primary || '').trim() || null,
+    provider: route.provider,
+    sourceKind: route.sourceKind,
+    durationMs,
+    input: {
+      imagePath: previewText(body.imagePath, 300),
+      requestedModel: previewText(body.modelId, 120),
+    },
+    artifact: {
+      path: qa.imagePath || null,
+    },
+    nonBlocking: qa.nonBlocking !== false,
+  });
+}
+
+function recordModelVisionFallback(body: Record<string, unknown>, error: unknown, durationMs: number): void {
+  const route = getResolvedModelRoute('vision');
+  safeAddModelUsageRecord({
+    operation: 'vision.qa',
+    routeKey: 'vision',
+    status: 'fallback',
+    model: previewText(body.modelId, 120),
+    provider: route.provider,
+    sourceKind: route.sourceKind,
+    durationMs,
+    input: {
+      imagePath: previewText(body.imagePath, 300),
+      requestedModel: previewText(body.modelId, 120),
+    },
+    fallback: {
+      mode: 'manual_review',
+      reason: safeError(error),
+    },
+    findings: route.findings,
+    error: safeError(error),
+    nonBlocking: true,
+  });
+}
+
+async function modelRoutingRegressionPayload(): Promise<Record<string, unknown>> {
+  const routes = getResolvedModelRoutes();
+  const probes = await probeModelRoutes();
+  const history = listModelUsageHistory();
+  const blockedConfiguredProbeCount = probes.filter((probe) => (
+    probe.status === 'blocked' && routes.find((route) => route.key === probe.key)?.configured
+  )).length;
+  const checks = [
+    {
+      code: 'route_inventory',
+      status: routes.length === 3 ? 'ready' : 'blocked',
+      message: `读取到 ${routes.length} 条模型路由。`,
+    },
+    {
+      code: 'provider_live_probe',
+      status: blockedConfiguredProbeCount > 0 ? 'blocked' : probes.some((probe) => probe.status === 'ready') ? 'ready' : 'warning',
+      message: blockedConfiguredProbeCount > 0
+        ? `${blockedConfiguredProbeCount} 条已配置 provider 连通性失败。`
+        : probes.some((probe) => probe.status === 'ready')
+          ? '至少一条 provider live probe 已连通。'
+          : '当前没有可 live probe 的真实 provider。未配置时保持人工回退。',
+    },
+    {
+      code: 'image_fallback_policy',
+      status: 'ready',
+      message: 'image 生成失败或未配置时返回 manual_file，不生成假文件。',
+    },
+    {
+      code: 'vision_non_blocking_policy',
+      status: 'ready',
+      message: 'vision 质检失败或未配置时返回 manual_review，不阻断 Photoshop / 飞书主链路。',
+    },
+    {
+      code: 'usage_audit',
+      status: history.length > 0 ? 'ready' : 'warning',
+      message: history.length > 0 ? `${history.length} 条模型调用审计记录。` : '尚无模型调用审计记录，首次 image/vision 调用后会写入。',
+    },
+  ];
+  return {
+    ok: true,
+    regression: {
+      generatedAt: new Date().toISOString(),
+      status: checks.some((check) => check.status === 'blocked') ? 'blocked' : 'ready',
+      checks,
+      routes,
+      probes,
+      usageHistoryCount: history.length,
+      latestUsageRecord: history[0] || null,
+      safety: {
+        noMockData: true,
+        imageFallback: 'manual_file',
+        visionFallback: 'manual_review',
+        mainChainBlocking: false,
+      },
+    },
+  };
+}
+
 function mappingKey(slotKey: string, capability: SlotCapability): string {
   return `${capability}:${slotKey}`;
 }
@@ -826,6 +996,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         derivedTargets: listDerivedTargets(),
         feishuTargets: listFeishuTargets(),
         feishuSendHistory: listFeishuSendHistory(),
+        modelUsageHistory: listModelUsageHistory(),
       });
       return true;
     }
@@ -884,6 +1055,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/model-routes/live-probe') {
+      sendJson(res, 200, {
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        probes: await probeModelRoutes(),
+      });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/model-routes/usage-history') {
+      sendJson(res, 200, {
+        ok: true,
+        history: listModelUsageHistory(),
+      });
+      return true;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/models/image/generate') {
       const body = await readJsonBody<{
         prompt?: string;
@@ -892,17 +1080,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         slotKey?: string;
       }>(req);
       if (!String(body.prompt || '').trim()) throw badRequest('生图 prompt 不能为空。');
+      const startedAt = Date.now();
       try {
+        const result = await generateImageArtifact({
+          prompt: String(body.prompt || '').trim(),
+          modelId: String(body.modelId || '').trim(),
+          size: String(body.size || '').trim(),
+          slotKey: String(body.slotKey || '').trim(),
+        });
+        recordModelImageSuccess(body as Record<string, unknown>, result, Date.now() - startedAt);
         sendJson(res, 200, {
           ok: true,
-          ...(await generateImageArtifact({
-            prompt: String(body.prompt || '').trim(),
-            modelId: String(body.modelId || '').trim(),
-            size: String(body.size || '').trim(),
-            slotKey: String(body.slotKey || '').trim(),
-          })),
+          ...result,
         });
       } catch (error) {
+        recordModelImageFallback(body as Record<string, unknown>, error, Date.now() - startedAt);
         sendJson(res, 200, {
           ok: true,
           status: 'fallback',
@@ -924,16 +1116,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         prompt?: string;
       }>(req);
       if (!String(body.imagePath || '').trim()) throw badRequest('缺少要质检的 final.png 路径。');
+      const startedAt = Date.now();
       try {
+        const result = await runVisionQualityCheck({
+          imagePath: String(body.imagePath || '').trim(),
+          modelId: String(body.modelId || '').trim(),
+          prompt: String(body.prompt || '').trim(),
+        });
+        recordModelVisionSuccess(body as Record<string, unknown>, result, Date.now() - startedAt);
         sendJson(res, 200, {
           ok: true,
-          ...(await runVisionQualityCheck({
-            imagePath: String(body.imagePath || '').trim(),
-            modelId: String(body.modelId || '').trim(),
-            prompt: String(body.prompt || '').trim(),
-          })),
+          ...result,
         });
       } catch (error) {
+        recordModelVisionFallback(body as Record<string, unknown>, error, Date.now() - startedAt);
         sendJson(res, 200, {
           ok: true,
           status: 'fallback',
@@ -976,6 +1172,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
     if (req.method === 'GET' && url.pathname === '/api/regression/feishu-output') {
       sendJson(res, 200, await feishuOutputRegressionPayload());
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/regression/model-routing') {
+      sendJson(res, 200, await modelRoutingRegressionPayload());
       return true;
     }
 

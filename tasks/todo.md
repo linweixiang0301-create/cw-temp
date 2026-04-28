@@ -221,3 +221,28 @@
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
 - 已推送远端 main：`23925dae170bd09d43e19aaf52bf967316daa858`。
 - 远端冷启动克隆通过：`npm ci`、`npm run check`、`node --check public/app.js`、关键节点 `rg` 检查、备用端口 `3601` 的 `/api/status`、`/api/jobs/latest-artifact-center`、`/api/feishu/send-history/export`、`/api/regression/feishu-output` 和 `/favicon.ico` smoke 均正常。
+
+# 2026-04-28 任务 — 模型路由运维审计闭环
+
+## 目标
+- 优先补齐模型路由真实接入前的运维闭环：配置状态、live provider 连通性、image/vision 调用结果、失败回退都能被追踪。
+- 不使用 mock，不伪造模型产物；没有真实 provider 时保持 `manual_file` / `manual_review` 回退。
+- 不改变 Photoshop -> final.png -> 飞书输出主链路；不发送 PSD，不触发飞书重复发送。
+
+- [x] 增加模型路由 live probe API，真实请求已配置 provider 的 `/v1/models`，未配置时只返回跳过/阻断原因。
+- [x] 增加模型使用审计记录，记录 image 生成与 vision 质检的成功、失败和回退。
+- [x] 在 `/api/status` 和独立 API 中暴露模型使用历史，便于 UI 和冷启动验证。
+- [x] UI 模型路由面板增加 live probe、使用历史和最近回退展示。
+- [x] 增加模型路由回归检查 API，汇总配置、最近调用、回退边界和非阻断策略。
+- [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证。
+- [ ] 远端冷启动回归并推送 GitHub。
+
+## 回顾
+- 新增 `/api/model-routes/live-probe`：只对已配置 Base URL 的真实 provider 请求 `/v1/models`；当前本机 3 路模型均未配置，因此 live probe 全部返回 `skipped`，没有伪造连通。
+- 新增本地 `modelUsageHistory` 审计，`/api/status` 和 `/api/model-routes/usage-history` 均可读取；审计写入为非阻断，即使写 state 失败也不影响 image/vision API。
+- `/api/models/image/generate` 在未配置 image provider 时返回 `fallback.manual_file`，并写入 1 条 `image.generate/fallback` 审计，不生成假图片。
+- `/api/models/vision/qa` 使用真实 `final.png` 验证：未配置 vision provider 时返回 `fallback.manual_review` 且 `nonBlocking=true`，并写入 1 条 `vision.qa/fallback` 审计。
+- 新增 `/api/regression/model-routing`，当前返回 `ready`；provider live probe 为 `warning`，原因是没有可 live probe 的真实 provider；fallback 策略和 usage audit 均通过。
+- UI 模型路由面板新增“连通性检查”“模型回归”和“模型使用记录”，桌面 1440x1200 与移动 390x844 Playwright 验证通过，控制台无 error、无横向溢出。
+- `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
+- 飞书发送历史仍为 2 条（1 sent / 1 failed duplicate guard），本轮未新增飞书消息，未发送 PSD。

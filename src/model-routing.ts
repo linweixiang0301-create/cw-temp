@@ -51,6 +51,21 @@ type VisionQaInput = {
   prompt?: string;
 };
 
+export type ModelRouteProbeResult = {
+  key: ModelRouteKey;
+  label: string;
+  checkedAt: string;
+  status: 'ready' | 'blocked' | 'skipped';
+  routeReady: boolean;
+  endpoint?: string | null;
+  latencyMs?: number | null;
+  modelCount?: number | null;
+  configuredModels?: string[];
+  matchedModels?: string[];
+  findings: Array<{ code: string; message: string; severity: 'info' | 'warning' | 'error' }>;
+  error?: string | null;
+};
+
 const ROUTES: RouteMeta[] = [
   { key: 'instruction', label: '指令解析模型', envPrefix: 'PS_AUTOMATION_INSTRUCTION' },
   { key: 'image', label: '生图 / 图生图模型', envPrefix: 'PS_AUTOMATION_IMAGE' },
@@ -245,6 +260,125 @@ async function fetchJsonWithTimeout(url: string, body: unknown, headers: Record<
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchJsonGetWithTimeout(url: string, headers: Record<string, string>): Promise<{ payload: unknown; latencyMs: number }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    const latencyMs = Date.now() - startedAt;
+    const text = await response.text();
+    let payload: unknown = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = { raw: text };
+    }
+    if (!response.ok) {
+      throw new ModelRouteError(`模型 provider 连通性检查失败：HTTP ${response.status}`, {
+        status: response.status,
+        endpoint: url,
+        response: payload,
+        latencyMs,
+      }, response.status >= 400 && response.status < 500 ? 400 : 502);
+    }
+    return { payload, latencyMs };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function modelIdsFromPayload(payload: unknown): string[] {
+  const raw = objectValue(payload);
+  const data = Array.isArray(raw.data) ? raw.data : [];
+  const models = Array.isArray(raw.models) ? raw.models : [];
+  return [...new Set([...data, ...models].map((item) => {
+    const rawItem = objectValue(item);
+    return String(rawItem.id || rawItem.name || '').trim();
+  }).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+async function probeOneRoute(route: ResolvedModelRoute): Promise<ModelRouteProbeResult> {
+  const checkedAt = new Date().toISOString();
+  const configuredModels = route.models || [];
+  const base = {
+    key: route.key,
+    label: route.label,
+    checkedAt,
+    routeReady: route.ready,
+    configuredModels,
+    matchedModels: [] as string[],
+  };
+  if (!route.configured) {
+    return {
+      ...base,
+      status: 'skipped',
+      findings: [{ code: 'route_not_configured', severity: 'info', message: '未配置模型路由，跳过 live probe。' }],
+    };
+  }
+  if (!route.baseUrl) {
+    return {
+      ...base,
+      status: 'skipped',
+      findings: [{ code: 'base_url_missing', severity: 'info', message: '没有 Base URL，无法真实请求 provider。' }],
+    };
+  }
+
+  const endpoint = endpointFor(route, '/models');
+  if (!route.ready) {
+    return {
+      ...base,
+      status: 'blocked',
+      endpoint,
+      findings: route.findings,
+    };
+  }
+
+  try {
+    const response = await fetchJsonGetWithTimeout(endpoint, headersFor(route));
+    const providerModels = modelIdsFromPayload(response.payload);
+    const matchedModels = configuredModels.filter((model) => providerModels.includes(model));
+    const missingModels = providerModels.length > 0
+      ? configuredModels.filter((model) => !providerModels.includes(model))
+      : [];
+    return {
+      ...base,
+      status: 'ready',
+      endpoint,
+      latencyMs: response.latencyMs,
+      modelCount: providerModels.length,
+      matchedModels,
+      findings: missingModels.length
+        ? [{
+            code: 'configured_model_not_listed',
+            severity: 'warning',
+            message: `provider 可连通，但未在 /v1/models 返回中看到：${missingModels.join(', ')}`,
+          }]
+        : [],
+    };
+  } catch (error) {
+    return {
+      ...base,
+      status: 'blocked',
+      endpoint,
+      findings: [{
+        code: 'provider_probe_failed',
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      }],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function probeModelRoutes(): Promise<ModelRouteProbeResult[]> {
+  return Promise.all(getResolvedModelRoutes().map((route) => probeOneRoute(route)));
 }
 
 async function callModels(

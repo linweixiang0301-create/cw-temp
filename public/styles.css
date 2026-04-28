@@ -351,6 +351,70 @@ button:disabled {
   margin-top: 4px;
 }
 
+.model-usage-head {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.model-usage-head strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.model-usage-history {
+  display: grid;
+  gap: 6px;
+}
+
+.model-usage-card {
+  background: #f8fafc;
+  border: 1px solid #e6ecf5;
+  border-left: 3px solid #9db7d8;
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+}
+
+.model-usage-card.generated,
+.model-usage-card.completed {
+  border-left-color: #24a36a;
+}
+
+.model-usage-card.fallback {
+  border-left-color: #df9b2d;
+}
+
+.model-usage-card.failed {
+  border-left-color: #d94f4f;
+}
+
+.model-usage-card strong,
+.model-usage-card span,
+.model-usage-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.model-usage-card strong {
+  color: #102a5f;
+  font-size: 11px;
+}
+
+.model-usage-card span {
+  color: #475467;
+  font-size: 10px;
+}
+
+.model-usage-card small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
 .model-route-findings {
   display: grid;
   gap: 5px;

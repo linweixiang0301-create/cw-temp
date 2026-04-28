@@ -127,6 +127,37 @@ export type ModelRouteRecord = {
   updatedAt: string;
 };
 
+export type ModelUsageRecord = {
+  id: string;
+  createdAt: string;
+  operation: 'image.generate' | 'vision.qa';
+  routeKey: ModelRouteKey;
+  status: 'generated' | 'completed' | 'fallback' | 'failed';
+  model?: string | null;
+  provider?: ModelRouteProvider | null;
+  sourceKind?: 'local' | 'env' | 'none' | null;
+  durationMs?: number | null;
+  input?: {
+    promptPreview?: string | null;
+    slotKey?: string | null;
+    imagePath?: string | null;
+    requestedModel?: string | null;
+  } | null;
+  artifact?: {
+    path?: string | null;
+    metadataPath?: string | null;
+    sizeBytes?: number | null;
+    mime?: string | null;
+  } | null;
+  fallback?: {
+    mode?: string | null;
+    reason?: string | null;
+  } | null;
+  findings?: Array<{ code?: string; message?: string; severity?: string }>;
+  error?: string | null;
+  nonBlocking: boolean;
+};
+
 type StateShape = {
   downloads: DownloadRecord[];
   jobs: ConsoleJobRecord[];
@@ -135,6 +166,7 @@ type StateShape = {
   feishuTargets: FeishuTargetRecord[];
   feishuSendHistory: FeishuSendRecord[];
   modelRoutes: ModelRouteRecord[];
+  modelUsageHistory: ModelUsageRecord[];
 };
 
 const STATE_PATH = runtimePath('console-state.json');
@@ -148,6 +180,7 @@ function emptyState(): StateShape {
     feishuTargets: [],
     feishuSendHistory: [],
     modelRoutes: [],
+    modelUsageHistory: [],
   };
 }
 
@@ -160,6 +193,7 @@ function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape
     feishuTargets: Array.isArray(raw?.feishuTargets) ? raw.feishuTargets : [],
     feishuSendHistory: Array.isArray(raw?.feishuSendHistory) ? raw.feishuSendHistory : [],
     modelRoutes: Array.isArray(raw?.modelRoutes) ? raw.modelRoutes : [],
+    modelUsageHistory: Array.isArray(raw?.modelUsageHistory) ? raw.modelUsageHistory : [],
   };
 }
 
@@ -467,4 +501,35 @@ export function saveModelRoute(input: {
   ].slice(0, 10);
   writeState(state);
   return normalized;
+}
+
+export function listModelUsageHistory(): ModelUsageRecord[] {
+  return readState().modelUsageHistory.slice(0, 100);
+}
+
+export function addModelUsageRecord(input: Omit<ModelUsageRecord, 'id' | 'createdAt' | 'nonBlocking'> & {
+  createdAt?: string;
+  nonBlocking?: boolean;
+}): ModelUsageRecord {
+  const state = readState();
+  const record: ModelUsageRecord = {
+    id: crypto.randomUUID(),
+    createdAt: input.createdAt || new Date().toISOString(),
+    operation: input.operation,
+    routeKey: input.routeKey,
+    status: input.status,
+    model: input.model ?? null,
+    provider: input.provider ?? null,
+    sourceKind: input.sourceKind ?? null,
+    durationMs: input.durationMs ?? null,
+    input: input.input || null,
+    artifact: input.artifact || null,
+    fallback: input.fallback || null,
+    findings: Array.isArray(input.findings) ? input.findings : [],
+    error: input.error ?? null,
+    nonBlocking: input.nonBlocking !== false,
+  };
+  state.modelUsageHistory = [record, ...state.modelUsageHistory].slice(0, 100);
+  writeState(state);
+  return record;
 }
