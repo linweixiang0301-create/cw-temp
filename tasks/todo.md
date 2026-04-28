@@ -61,6 +61,13 @@
   - `node --check public/app.js`
   - `git diff --check`
   - 仓库密钥扫描无 `sk-...` 明文
+- 远端冷启动回归：
+  - fresh clone HEAD：`a29c6b9a9f450115cbb29e2e4ce9eac6a4e875f5`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 仓库密钥扫描无 `sk-...` 明文
+  - 无 `.env.local`、无 provider env、全新 runtime：image/vision 均未配置，但 API fallback 正常；image 返回 `manual_file`，vision 返回 `manual_review`
 - 本轮未发送飞书消息，未外发 PSD。
 
 # 2026-04-28 任务 — vision 双凭据生产化闭环 1-3 项
