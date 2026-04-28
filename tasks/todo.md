@@ -63,6 +63,13 @@
   - `/api/status`
   - `/api/model-routes/live-probe`
   - `git grep` 扫描 tracked files 未发现 `sk-...` 明文。
+- 已推送远端 main：
+  - `e28b2d83d1b541668f7a68fe722eb21e8e5f6903` — `Add smart PSD rebuild upload flow`
+- 远端 fresh clone 回归：
+  - clone HEAD：`e28b2d83d1b541668f7a68fe722eb21e8e5f6903`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
 
 # 2026-04-28 任务 — 模型三路协作关系分析与 UI 优化
 
