@@ -345,6 +345,45 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.muted-field {
+  opacity: 0.62;
+}
+
+.codex-auth-inline {
+  background: #ffffff;
+  border: 1px solid #e8edf5;
+  border-radius: 7px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+}
+
+.codex-auth-inline.ready {
+  border-left: 3px solid var(--green);
+}
+
+.codex-auth-inline.blocked {
+  border-left: 3px solid var(--red);
+}
+
+.codex-auth-inline strong,
+.codex-auth-inline span,
+.codex-auth-inline small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.codex-auth-inline strong {
+  color: #344054;
+  font-size: 11px;
+}
+
+.codex-auth-inline span {
+  color: #101828;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .model-route-results {
   display: grid;
   gap: 7px;

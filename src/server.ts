@@ -238,7 +238,7 @@ function isModelRouteKey(value: string): value is ModelRouteKey {
 }
 
 function isModelRouteProvider(value: string): value is ModelRouteProvider {
-  return value === 'openai-compatible';
+  return value === 'openai-compatible' || value === 'codex-login';
 }
 
 function feishuTargetLooksValid(type: 'chat' | 'user', value: string): boolean {
@@ -1207,7 +1207,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const provider = String(body.provider || 'openai-compatible').trim();
       const primary = String(body.primary || '').trim();
       if (!isModelRouteKey(key)) throw badRequest('模型路由 key 必须是 instruction、image 或 vision。');
-      if (!isModelRouteProvider(provider)) throw badRequest('当前只支持 openai-compatible provider。');
+      if (!isModelRouteProvider(provider)) throw badRequest('当前只支持 openai-compatible 或 codex-login provider。');
+      if (provider === 'codex-login' && key !== 'instruction') {
+        throw badRequest('codex-login provider 仅用于指令解析模型。');
+      }
       if (!primary) throw badRequest('模型主路由不能为空。');
       const route = saveModelRoute({
         key,

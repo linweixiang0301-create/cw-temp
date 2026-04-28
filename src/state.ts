@@ -133,7 +133,7 @@ export type FeishuSendRecord = {
 
 export type ModelRouteKey = 'instruction' | 'image' | 'vision';
 
-export type ModelRouteProvider = 'openai-compatible';
+export type ModelRouteProvider = 'openai-compatible' | 'codex-login';
 
 export type ModelRouteRecord = {
   key: ModelRouteKey;
@@ -157,7 +157,7 @@ export type ModelUsageRecord = {
   status: 'generated' | 'completed' | 'fallback' | 'failed';
   model?: string | null;
   provider?: ModelRouteProvider | null;
-  sourceKind?: 'local' | 'env' | 'none' | null;
+  sourceKind?: 'local' | 'env' | 'codex' | 'none' | null;
   durationMs?: number | null;
   input?: {
     promptPreview?: string | null;
@@ -476,7 +476,7 @@ function isModelRouteKey(value: string): value is ModelRouteKey {
 }
 
 function isModelRouteProvider(value: string): value is ModelRouteProvider {
-  return value === 'openai-compatible';
+  return value === 'openai-compatible' || value === 'codex-login';
 }
 
 function normalizeModelRoute(record: ModelRouteRecord): ModelRouteRecord | null {
@@ -484,6 +484,7 @@ function normalizeModelRoute(record: ModelRouteRecord): ModelRouteRecord | null 
   const provider = String(record.provider || 'openai-compatible').trim();
   const primary = String(record.primary || '').trim();
   if (!isModelRouteKey(key) || !isModelRouteProvider(provider) || !primary) return null;
+  if (provider === 'codex-login' && key !== 'instruction') return null;
   const now = new Date().toISOString();
   const modelApiKeyEnvs = Object.entries(record.modelApiKeyEnvs || {}).reduce<Record<string, string>>((acc, [model, envName]) => {
     const normalizedModel = String(model || '').trim();

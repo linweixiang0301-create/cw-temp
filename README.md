@@ -113,9 +113,16 @@ export PS_AUTOMATION_FEISHU_USER_ID=ou_xxx
 
 控制台支持 `instruction` / `image` / `vision` 三类模型路由，本机 runtime state 只保存模型名、Base URL、provider 和 API Key 环境变量名，不保存密钥原文。
 
+`instruction` 默认可使用 `codex-login` provider：控制台读取本机 Codex 登录态和模型配置，只返回登录状态、当前模型、provider、刷新时间等非敏感字段，不返回或持久化 token / cookie / 密钥。该 provider 不需要 Base URL 或 API Key Env，也不会在 live probe 阶段请求外部模型 provider。
+
 当前真实 provider 验证过的配置形态：
 
 ```text
+instruction:
+  provider: codex-login
+  primary: gpt-5.5
+  source: local-codex-login
+
 image:
   baseUrl: https://api.tu-zi.com/v1
   apiKeyEnv: GEMINI_TUZI_API_KEY

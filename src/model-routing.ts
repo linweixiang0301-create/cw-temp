@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { runtimePath } from './config.js';
 import {
@@ -24,12 +25,13 @@ export type ResolvedModelRoute = {
   primary: string | null;
   fallback: string | null;
   source: string | null;
-  sourceKind: 'local' | 'env' | 'none';
+  sourceKind: 'local' | 'env' | 'codex' | 'none';
   provider: ModelRouteProvider | null;
   baseUrl: string | null;
   apiKeyEnv: string | null;
   modelApiKeyEnvs: Record<string, string>;
   models: string[];
+  codexAuth?: CodexAuthStatus | null;
   findings: Array<{ code: string; message: string; severity: 'info' | 'warning' | 'error' }>;
 };
 
@@ -74,6 +76,18 @@ type VisionQaInput = {
   prompt?: string;
 };
 
+type CodexAuthStatus = {
+  checkedAt: string;
+  status: 'logged_in' | 'not_logged_in' | 'missing' | 'unknown';
+  authMode: string | null;
+  configModel: string | null;
+  configProvider: string | null;
+  lastRefresh: string | null;
+  authPath: string;
+  configPath: string;
+  findings: string[];
+};
+
 export type ModelRouteProbeResult = {
   key: ModelRouteKey;
   label: string;
@@ -101,6 +115,98 @@ const DEFAULT_VISION_PROMPT = [
   '请用中文返回：整体是否可投递、明显文字/图像异常、是否需要人工复核。',
   '如果无法判断，请明确说明原因。',
 ].join('\n');
+
+function codexHome(): string {
+  return process.env.CODEX_HOME
+    ? path.resolve(process.env.CODEX_HOME)
+    : path.join(os.homedir(), '.codex');
+}
+
+function simpleTomlValue(content: string, key: string): string | null {
+  const pattern = new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`, 'm');
+  const match = content.match(pattern);
+  if (!match) return null;
+  const raw = String(match[1] || '').replace(/\s+#.*$/, '').trim();
+  if (!raw) return null;
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1).trim() || null;
+  }
+  return raw.trim() || null;
+}
+
+function readCodexAuthStatus(): CodexAuthStatus {
+  const home = codexHome();
+  const authPath = path.join(home, 'auth.json');
+  const configPath = path.join(home, 'config.toml');
+  const findings: string[] = [];
+  let authMode: string | null = null;
+  let lastRefresh: string | null = null;
+  let tokenPresent = false;
+  let configModel: string | null = null;
+  let configProvider: string | null = null;
+
+  try {
+    if (!fs.existsSync(authPath) || !fs.statSync(authPath).isFile()) {
+      findings.push('未找到本地 Codex auth.json。');
+      return {
+        checkedAt: new Date().toISOString(),
+        status: 'missing',
+        authMode,
+        configModel,
+        configProvider,
+        lastRefresh,
+        authPath,
+        configPath,
+        findings,
+      };
+    }
+    const auth = JSON.parse(fs.readFileSync(authPath, 'utf8')) as Record<string, unknown>;
+    const tokens = auth.tokens && typeof auth.tokens === 'object' ? auth.tokens as Record<string, unknown> : {};
+    authMode = String(auth.auth_mode || '').trim() || null;
+    lastRefresh = String(auth.last_refresh || '').trim() || null;
+    tokenPresent = Boolean(String(tokens.access_token || '').trim() || String(tokens.refresh_token || '').trim());
+  } catch (error) {
+    findings.push(`读取本地 Codex auth 状态失败：${error instanceof Error ? error.message : String(error)}`);
+    return {
+      checkedAt: new Date().toISOString(),
+      status: 'unknown',
+      authMode,
+      configModel,
+      configProvider,
+      lastRefresh,
+      authPath,
+      configPath,
+      findings,
+    };
+  }
+
+  try {
+    if (fs.existsSync(configPath) && fs.statSync(configPath).isFile()) {
+      const config = fs.readFileSync(configPath, 'utf8');
+      configModel = simpleTomlValue(config, 'model');
+      configProvider = simpleTomlValue(config, 'model_provider');
+    } else {
+      findings.push('未找到本地 Codex config.toml，使用默认模型名。');
+    }
+  } catch (error) {
+    findings.push(`读取本地 Codex config 状态失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (!tokenPresent) findings.push('本地 Codex 未检测到 ChatGPT 登录 token。');
+  if (authMode && authMode !== 'chatgpt') findings.push(`当前 Codex auth_mode=${authMode}，不是 ChatGPT 登录态。`);
+
+  return {
+    checkedAt: new Date().toISOString(),
+    status: tokenPresent && (!authMode || authMode === 'chatgpt') ? 'logged_in' : 'not_logged_in',
+    authMode,
+    configModel,
+    configProvider,
+    lastRefresh,
+    authPath,
+    configPath,
+    findings,
+  };
+}
 
 export class ModelRouteError extends Error {
   statusCode: number;
@@ -157,6 +263,24 @@ function envRoute(meta: RouteMeta): ModelRouteRecord | null {
   };
 }
 
+function codexLoginRoute(meta: RouteMeta, auth: CodexAuthStatus): ModelRouteRecord | null {
+  if (meta.key !== 'instruction' || auth.status === 'missing') return null;
+  const now = new Date().toISOString();
+  return {
+    key: meta.key,
+    provider: 'codex-login',
+    primary: auth.configModel || 'gpt-5.5',
+    fallback: null,
+    source: 'local-codex-login',
+    baseUrl: null,
+    apiKeyEnv: null,
+    modelApiKeyEnvs: {},
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function localRoute(key: ModelRouteKey): ModelRouteRecord | null {
   return listModelRoutes().find((record) => record.key === key) || null;
 }
@@ -201,8 +325,22 @@ function findingsForRoute(route: ResolvedModelRoute): ResolvedModelRoute['findin
   if (!route.enabled) {
     findings.push({ code: 'route_disabled', severity: 'warning', message: '本地模型路由已禁用。' });
   }
+  if (route.provider === 'codex-login' && route.key !== 'instruction') {
+    findings.push({ code: 'provider_role_mismatch', severity: 'error', message: 'codex-login 仅允许用于指令解析模型。' });
+  }
   if (!route.primary) {
     findings.push({ code: 'model_missing', severity: 'error', message: '未设置主模型。' });
+  }
+  if (route.provider === 'codex-login') {
+    const auth = route.codexAuth || readCodexAuthStatus();
+    if (auth.status !== 'logged_in') {
+      findings.push({
+        code: 'codex_login_missing',
+        severity: 'error',
+        message: auth.findings[0] || '本地 Codex 登录态未通过。',
+      });
+    }
+    return findings;
   }
   if ((route.key === 'image' || route.key === 'vision') && !route.baseUrl) {
     findings.push({ code: 'base_url_missing', severity: 'error', message: '真实模型调用需要 OpenAI-compatible Base URL。' });
@@ -235,10 +373,18 @@ function findingsForRoute(route: ResolvedModelRoute): ResolvedModelRoute['findin
 }
 
 function resolveRoute(meta: RouteMeta): ResolvedModelRoute {
-  const record = localRoute(meta.key) || envRoute(meta);
-  const sourceKind: ResolvedModelRoute['sourceKind'] = record
-    ? listModelRoutes().some((item) => item.key === meta.key) ? 'local' : 'env'
-    : 'none';
+  const auth = meta.key === 'instruction' ? readCodexAuthStatus() : null;
+  const local = localRoute(meta.key);
+  const env = envRoute(meta);
+  const codex = auth ? codexLoginRoute(meta, auth) : null;
+  const record = local || env || codex;
+  const sourceKind: ResolvedModelRoute['sourceKind'] = local
+    ? 'local'
+    : env
+      ? 'env'
+      : codex
+        ? 'codex'
+        : 'none';
   const base: ResolvedModelRoute = {
     key: meta.key,
     label: meta.label,
@@ -254,6 +400,7 @@ function resolveRoute(meta: RouteMeta): ResolvedModelRoute {
     apiKeyEnv: record?.apiKeyEnv || null,
     modelApiKeyEnvs: record?.modelApiKeyEnvs || {},
     models: routeModels(record),
+    codexAuth: record?.provider === 'codex-login' ? auth : null,
     findings: [],
   };
   const findings = findingsForRoute(base);
@@ -386,6 +533,24 @@ async function probeOneRoute(route: ResolvedModelRoute): Promise<ModelRouteProbe
       ...base,
       status: 'skipped',
       findings: [{ code: 'route_not_configured', severity: 'info', message: '未配置模型路由，跳过 live probe。' }],
+    };
+  }
+  if (route.provider === 'codex-login') {
+    const auth = route.codexAuth || readCodexAuthStatus();
+    return {
+      ...base,
+      status: route.ready ? 'ready' : 'blocked',
+      endpoint: 'local-codex-login',
+      latencyMs: 0,
+      modelCount: configuredModels.length,
+      matchedModels: route.ready ? configuredModels : [],
+      findings: route.ready
+        ? [{
+            code: 'codex_login_ready',
+            severity: 'info',
+            message: `本地 Codex 登录态已通过，当前模型 ${auth.configModel || route.primary || '-'}.`,
+          }]
+        : route.findings,
     };
   }
   if (!route.baseUrl) {

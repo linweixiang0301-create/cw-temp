@@ -346,6 +346,45 @@ function routeCredentialOverrideText(route) {
   return `模型专用 Key ${pairs.map(([model, envName]) => `${model}:${envName}`).join(' · ')}`;
 }
 
+function isCodexLoginRoute(route) {
+  return route?.provider === 'codex-login';
+}
+
+function providerLabel(provider) {
+  if (provider === 'codex-login') return '本地 Codex 登录态';
+  return provider || '-';
+}
+
+function codexAuthStatusText(status) {
+  if (status === 'logged_in') return '已登录';
+  if (status === 'not_logged_in') return '未登录';
+  if (status === 'missing') return '未找到';
+  if (status === 'unknown') return '未知';
+  return '未检测';
+}
+
+function codexAuthHtml(route) {
+  const auth = route?.codexAuth;
+  if (!auth) return '';
+  const tone = auth.status === 'logged_in' ? 'ready' : 'blocked';
+  const detail = [
+    auth.authMode ? `auth ${auth.authMode}` : '',
+    auth.configProvider ? `provider ${auth.configProvider}` : '',
+    auth.lastRefresh ? `refresh ${formatLocalDateTime(auth.lastRefresh)}` : '',
+  ].filter(Boolean).join(' · ');
+  const findings = Array.isArray(auth.findings) && auth.findings.length
+    ? `<small>${escapeHtml(auth.findings.join(' · '))}</small>`
+    : '';
+  return `
+    <div class="codex-auth-inline ${tone}">
+      <strong>Codex Login</strong>
+      <span>${escapeHtml(codexAuthStatusText(auth.status))}</span>
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ''}
+      ${findings}
+    </div>
+  `;
+}
+
 function formatModelApiKeyEnvs(overrides) {
   if (!overrides || typeof overrides !== 'object') return '';
   return Object.entries(overrides)
@@ -392,6 +431,7 @@ function renderModelRouteSelects() {
 
 function renderModelRouteConfigForm() {
   const route = modelRouteConfigRoute();
+  const codexRoute = isCodexLoginRoute(route);
   return `
     <details class="model-route-config" open>
       <summary>本地配置</summary>
@@ -406,32 +446,34 @@ function renderModelRouteConfigForm() {
         <span>Provider</span>
         <select id="modelRouteProvider">
           <option value="openai-compatible" ${route.provider === 'openai-compatible' || !route.provider ? 'selected' : ''}>openai-compatible</option>
+          <option value="codex-login" ${route.provider === 'codex-login' ? 'selected' : ''}>本地 Codex 登录态</option>
         </select>
       </label>
       <label class="field tight">
         <span>主模型</span>
-        <input id="modelRoutePrimary" value="${escapeHtml(route.primary || '')}" placeholder="例如 gpt-image-1">
+        <input id="modelRoutePrimary" value="${escapeHtml(route.primary || '')}" placeholder="${codexRoute ? '读取 ~/.codex/config.toml' : '例如 gpt-image-1'}">
       </label>
       <label class="field tight">
         <span>备选模型</span>
-        <input id="modelRouteFallback" value="${escapeHtml(route.fallback || '')}" placeholder="可留空">
+        <input id="modelRouteFallback" value="${escapeHtml(route.fallback || '')}" placeholder="可留空" ${codexRoute ? 'disabled' : ''}>
       </label>
-      <label class="field tight">
+      <label class="field tight ${codexRoute ? 'muted-field' : ''}">
         <span>Base URL</span>
-        <input id="modelRouteBaseUrl" value="${escapeHtml(route.baseUrl || '')}" placeholder="http://127.0.0.1:11434/v1">
+        <input id="modelRouteBaseUrl" value="${escapeHtml(route.baseUrl || '')}" placeholder="${codexRoute ? '本地 Codex 登录态不需要 Base URL' : 'http://127.0.0.1:11434/v1'}" ${codexRoute ? 'disabled' : ''}>
       </label>
-      <label class="field tight">
+      <label class="field tight ${codexRoute ? 'muted-field' : ''}">
         <span>API Key Env</span>
-        <input id="modelRouteApiKeyEnv" value="${escapeHtml(route.apiKeyEnv || '')}" placeholder="OPENAI_API_KEY">
+        <input id="modelRouteApiKeyEnv" value="${escapeHtml(route.apiKeyEnv || '')}" placeholder="${codexRoute ? '本地 Codex 登录态不保存密钥' : 'OPENAI_API_KEY'}" ${codexRoute ? 'disabled' : ''}>
       </label>
-      <label class="field tight">
+      <label class="field tight ${codexRoute ? 'muted-field' : ''}">
         <span>模型专用 Key Env</span>
-        <textarea id="modelRouteModelApiKeyEnvs" rows="3" placeholder="gpt-5.5=GPT55_FLASH_API_KEY">${escapeHtml(formatModelApiKeyEnvs(route.modelApiKeyEnvs))}</textarea>
+        <textarea id="modelRouteModelApiKeyEnvs" rows="3" placeholder="${codexRoute ? '本地 Codex 登录态不需要模型专用 Key' : 'gpt-5.5=GPT55_FLASH_API_KEY'}" ${codexRoute ? 'disabled' : ''}>${escapeHtml(formatModelApiKeyEnvs(route.modelApiKeyEnvs))}</textarea>
       </label>
       <label class="field tight">
         <span>来源备注</span>
-        <input id="modelRouteSource" value="${escapeHtml(route.source || '')}" placeholder="local / openai / lmstudio">
+        <input id="modelRouteSource" value="${escapeHtml(route.source || '')}" placeholder="${codexRoute ? 'local-codex-login' : 'local / openai / lmstudio'}">
       </label>
+      ${codexRoute ? codexAuthHtml(route) : ''}
       <label class="check-row">
         <input id="modelRouteEnabled" type="checkbox" ${route.enabled === false ? '' : 'checked'}>
         <span>启用</span>
@@ -455,6 +497,13 @@ function renderModelRouteConfigForm() {
 function bindModelRouteControls() {
   $('modelRouteConfigKey')?.addEventListener('change', () => {
     state.modelRouteConfigKey = $('modelRouteConfigKey').value || 'image';
+    renderModelRoutes(state.modelRoutes);
+  });
+  $('modelRouteProvider')?.addEventListener('change', () => {
+    if ($('modelRouteProvider').value === 'codex-login') {
+      $('modelRouteConfigKey').value = 'instruction';
+      state.modelRouteConfigKey = 'instruction';
+    }
     renderModelRoutes(state.modelRoutes);
   });
   $('saveModelRouteBtn')?.addEventListener('click', () => saveModelRouteConfig().catch((error) => {
@@ -488,8 +537,9 @@ function renderModelRoutes(models) {
           <span>${route.configured ? escapeHtml(route.primary) : '未配置'}</span>
         </div>
         <small>备选 ${escapeHtml(route.fallback || '未选择')} · 来源 ${escapeHtml(route.sourceKind || route.source || '-')}</small>
-        <small>${escapeHtml(route.provider || '-')} · ${escapeHtml(route.baseUrl || 'Base URL 未设')}</small>
+        <small>${escapeHtml(providerLabel(route.provider))} · ${escapeHtml(isCodexLoginRoute(route) ? '本地登录态' : route.baseUrl || 'Base URL 未设')}</small>
         ${routeCredentialOverrideText(route) ? `<small>${escapeHtml(routeCredentialOverrideText(route))}</small>` : ''}
+        ${codexAuthHtml(route)}
         ${routeFindingHtml(route)}
       </div>
     `),

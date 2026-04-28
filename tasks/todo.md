@@ -1,3 +1,51 @@
+# 2026-04-28 任务 — 指令解析模型接入本地 Codex 登录态
+
+## 目标
+- “模型路由”里的指令解析模型使用本机 Codex 登录态，而不是要求手填 Base URL/API Key。
+- 只读取 `~/.codex/auth.json` / `~/.codex/config.toml` 的非敏感状态：是否登录、当前 Codex 模型、provider、刷新时间；不读取、不展示、不写入 token。
+- UI 支持选择 `codex-login` provider，并在路由卡片展示本地 Codex 登录态预检结果。
+- 保持 image / vision 真实 provider、fallback 和 PS + 飞书主链路不受影响。
+
+## 计划
+- [x] 扩展模型路由 provider：新增 `codex-login`，仅允许用于 `instruction`。
+- [x] 新增本地 Codex 登录态检测与自动指令路由默认值。
+- [x] 更新 UI 配置表单和路由卡片，展示 Codex 登录态并隐藏不适用的 Base URL/API Key 要求。
+- [x] 更新 README，运行类型检查、前端语法检查、真实 API 预检和密钥扫描。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/model-routes`，确认 instruction route 为 `codex-login` 且不返回 token/key。
+- 真实调用 `/api/model-routes/live-probe`，确认 instruction 本地登录态 probe 不请求外部 provider。
+- `rg` 扫描确认没有写入 `sk-...`、access token 或 refresh token 明文。
+
+## 回顾
+- 新增 `codex-login` provider：
+  - 只允许保存到 `instruction` 路由；尝试给 image 保存 `codex-login` 会返回 HTTP 400。
+  - `instruction` 未显式保存远程 provider 时，会读取本机 Codex 状态作为默认来源。
+  - 只读取并返回非敏感信息：登录状态、`auth_mode`、Codex config 模型、model provider、刷新时间是否存在、auth/config 路径和诊断；不返回 token 值。
+- 当前本机真实结果：
+  - `/api/model-routes`：`instruction` 为 `provider=codex-login`，`primary=gpt-5.5`，`ready=true`。
+  - Codex 登录态：`status=logged_in`，`authMode=chatgpt`，`configProvider=openai`。
+  - `/api/model-routes/live-probe`：instruction 使用 `endpoint=local-codex-login`，`matchedModels=["gpt-5.5"]`，不会请求外部 provider。
+  - image 保持 `gpt-image-2` + `gemini-3-pro-image-preview-4k`，live probe 命中真实 provider。
+  - vision 保持 `gemini-3-flash-preview` + `gpt-5.5`，live probe 命中真实 provider。
+- 已通过现有保存 API 固化本机 runtime 配置：
+  - `instruction / codex-login / gpt-5.5 / local-codex-login`
+  - 本机 `console-state.json` 只保存 provider、模型名和 source，`baseUrl=null`，`apiKeyEnv=null`，未写入密钥。
+- 空 `CODEX_HOME` 演练：
+  - instruction 未配置时保持 skipped，不会伪造登录态或模型调用。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/status`
+  - `/api/model-routes`
+  - `/api/model-routes/live-probe`
+  - `/api/regression/model-routing`
+  - API 响应和本机 runtime state 均未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-` 明文。
+
 # 2026-04-28 任务 — design006 下载前预检与确认闸门
 
 ## 目标
