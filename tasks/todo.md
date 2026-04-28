@@ -51,6 +51,14 @@
   - `/api/model-routes/live-probe`
   - `/api/regression/model-routing`
   - API 响应未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-` 明文。
+- 已推送远端 main：
+  - `1cd3d0df63f7d41ffb2a18b97af40f029087103b` — `Add model orchestration analysis`
+- 远端 fresh clone 回归：
+  - clone HEAD：`1cd3d0df63f7d41ffb2a18b97af40f029087103b`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 空 `CODEX_HOME` / 空 runtime 下，`getModelRouteOrchestration()` 返回真实 blocked 状态，不伪造登录态或 provider ready；仍输出 3 个 stages、4 个 handoffs 和完整 checks。
 
 # 2026-04-28 任务 — 指令解析模型接入本地 Codex 登录态
 
