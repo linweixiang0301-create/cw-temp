@@ -4409,7 +4409,7 @@ $('runRegressionBtn').addEventListener('click', async () => {
   }
 });
 
-$('uploadPsdRebuildImageBtn').addEventListener('click', async () => {
+$('uploadPsdRebuildImageBtn')?.addEventListener('click', async () => {
   try {
     $('uploadPsdRebuildImageBtn').disabled = true;
     setMessage('psdRebuildUploadResults', '正在上传真实图片...');
@@ -4421,7 +4421,7 @@ $('uploadPsdRebuildImageBtn').addEventListener('click', async () => {
   }
 });
 
-$('startPsdRebuildBtn').addEventListener('click', async () => {
+$('startPsdRebuildBtn')?.addEventListener('click', async () => {
   try {
     await startPsdRebuild();
   } catch (error) {
@@ -4429,12 +4429,12 @@ $('startPsdRebuildBtn').addEventListener('click', async () => {
   }
 });
 
-$('psdRebuildUploadSelect').addEventListener('change', () => {
+$('psdRebuildUploadSelect')?.addEventListener('change', () => {
   const upload = selectedPsdRebuildUpload();
   if (upload?.storedPath) $('psdRebuildImagePath').value = upload.storedPath;
 });
 
-$('refreshPsdLayerLibraryBtn').addEventListener('click', async () => {
+$('refreshPsdLayerLibraryBtn')?.addEventListener('click', async () => {
   try {
     $('refreshPsdLayerLibraryBtn').disabled = true;
     await refreshPsdLayerLibrary();

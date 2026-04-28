@@ -166,9 +166,9 @@ gpt-5.5=GPT55_FLASH_API_KEY
 
 `/api/models/vision/qa` 使用真实 `final.png` 调用视觉模型；如果输入图片低于 provider 可处理的最小尺寸，会先在本机生成可审计的兼容副本再调用模型。失败时返回 `manual_review`，不会阻断 Photoshop job 或飞书最终 PNG 输出链路。
 
-## 智能拆层 / PSD 重建
+## PSD 重建兼容 API
 
-控制台支持上传真实 JPG / PNG / WEBP 图片到本机 runtime：
+“智能拆层 / PSD 重建”和“拆解图层库”已从 UI 主界面下线。以下接口保留用于读取既有本机历史、审计追溯和兼容自动化脚本，不作为主链路入口：
 
 - `POST /api/uploads/images`：multipart 上传图片，落盘到 `~/.codex/ps-automation/uploads/images`，返回真实路径、大小、mime、宽高和 sha256。
 - `POST /api/psd-rebuild/jobs`：基于上传图片或本机图片路径创建 PSD 重建作业。
@@ -181,6 +181,6 @@ manifest 明确标注结果是“AI 重建层”，不是原始 PSD 图层恢复
 
 如果请求体传 `executePhotoshop: true`，服务会尝试用本机 Photoshop 执行生成的 JSX，把上传图片保存成本地 `rebuilt.psd`，并按拆层分析识别到的文字候选创建可编辑文本层。Photoshop 不可用或脚本失败时，作业仍保留本地 manifest / JSX / 审计记录，状态回退为人工复核，不影响既有 Photoshop + 飞书主链路。
 
-UI 里的“拆解图层库”会扫描真实本机目录 `~/.codex/ps-automation/psd-rebuild`，集中展示历史 job、manifest 摘要、源图、预览、PSD 是否已生成和本地文件大小。可从库里把任意 job 载入当前拆层结果，也可调用 `POST /api/psd-rebuild/library/:jobId/export-psd` 执行已有 JSX 生成 `rebuilt.psd` / `preview.png`。PSD 始终只保存在本机，飞书输出仍只使用 final.png。
+兼容 API 会扫描真实本机目录 `~/.codex/ps-automation/psd-rebuild`，返回历史 job、manifest 摘要、源图、预览、PSD 是否已生成和本地文件大小；也可调用 `POST /api/psd-rebuild/library/:jobId/export-psd` 执行已有 JSX 生成 `rebuilt.psd` / `preview.png`。PSD 始终只保存在本机，飞书输出仍只使用 final.png。
 
 Photoshop 导出时会保留 manifest 中的原图路径；若原图过小或 Photoshop 对原始 PNG 打开失败，重建脚本会使用本机兼容副本作为打开输入，再缩放回 manifest 的原始画布尺寸，避免把兼容处理误当作原始 PSD 图层恢复。

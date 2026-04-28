@@ -1,3 +1,39 @@
+# 2026-04-29 任务 — 取消拆解图层功能分区
+
+## 目标
+- 按用户判断，取消 UI 中“智能拆层 / PSD 重建”和“拆解图层库”功能分区。
+- 保留后端 PSD rebuild / library API 与本地历史记录，作为兼容和追溯能力，不删除用户本地作业或审计。
+- 确保主界面加载不再绑定缺失元素报错，PS 自动化、模型路由、Photoshop job、飞书只发 final.png 主链路不受影响。
+
+## 计划
+- [x] 从 `public/index.html` 移除拆解图层功能分区。
+- [x] 调整 `public/app.js` 事件绑定和初始化，元素不存在时不触发拆层逻辑。
+- [x] 更新 README，标注拆层 UI 已下线，后端只作兼容保留。
+- [x] 运行前端语法、类型检查、真实页面/API 验证与密钥扫描。
+- [x] 记录回顾和阶段日志。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实访问首页 HTML，确认不再包含“智能拆层 / PSD 重建”和“拆解图层库”分区。
+- 真实调用 `/api/status`，确认主状态仍可返回且不泄露 token/key。
+- 扫描 tracked files，确认没有 token/cookie/key 明文。
+
+## 回顾
+- 已从主界面移除“智能拆层 / PSD 重建”和“拆解图层库”整段 UI。
+- `public/app.js` 中相关按钮、select、刷新按钮的事件绑定改为元素存在时才绑定；初始化仍可安全调用 `renderPsdRebuildPanel()`，元素不存在时直接返回。
+- README 已改为“PSD 重建兼容 API”，说明相关接口只保留用于既有本机历史、审计追溯和兼容自动化脚本，不作为主链路入口。
+- 后端 `/api/psd-rebuild/*` 与本地 `~/.codex/ps-automation/psd-rebuild` 历史未删除，避免破坏已有审计与本地产物。
+- 真实验证：
+  - 首页 HTML 已不包含“智能拆层”“拆解图层库”“psdRebuild”“psdLayerLibrary”“开始智能拆层”。
+  - `/api/status` 正常返回，模型路由仍 ready，历史 `psdRebuildLibrary.count=11` 仅作为兼容数据保留。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果
+
 # 2026-04-29 任务 — 修正 image-2 拆层能力边界
 
 ## 目标

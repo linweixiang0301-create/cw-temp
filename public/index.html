@@ -150,55 +150,6 @@
           </div>
         </section>
 
-        <section class="psd-rebuild-panel">
-          <div class="section-head compact">
-            <div>
-              <h2>智能拆层 / PSD 重建</h2>
-              <p>上传扁平图片，默认由视觉模型生成 AI 重建 layer JSON；失败回退单图层重建包。</p>
-            </div>
-          </div>
-          <div class="psd-rebuild-grid">
-            <label class="field">
-              <span>上传图片</span>
-              <input id="psdRebuildImageInput" type="file" accept="image/png,image/jpeg,image/webp">
-            </label>
-            <label class="field">
-              <span>最近上传</span>
-              <select id="psdRebuildUploadSelect"></select>
-            </label>
-            <label class="field wide">
-              <span>或本机图片路径</span>
-              <input id="psdRebuildImagePath" placeholder="/path/to/source.jpg">
-            </label>
-            <label class="field">
-              <span>拆层分析模型</span>
-              <select id="psdRebuildAnalysisModel"></select>
-              <small class="field-hint">使用 vision 路由；image-2 只负责真实生图，不承担拆层分析。</small>
-            </label>
-            <label class="check-row psd-rebuild-check">
-              <input id="psdRebuildExecutePhotoshop" type="checkbox">
-              <span>同时尝试本机 Photoshop 导出 PSD</span>
-            </label>
-            <div class="button-row stretch psd-rebuild-actions">
-              <button id="uploadPsdRebuildImageBtn" type="button" class="secondary">上传图片</button>
-              <button id="startPsdRebuildBtn" type="button">开始智能拆层</button>
-            </div>
-          </div>
-          <div id="psdRebuildUploadResults" class="message-box"></div>
-          <div id="psdRebuildResults" class="psd-rebuild-results"></div>
-          <div class="psd-layer-library">
-            <div class="section-head compact">
-              <div>
-                <h3>拆解图层库</h3>
-                <p>本机 PSD 重建历史，可载入 manifest 或执行本地 Photoshop 导出。</p>
-              </div>
-              <button id="refreshPsdLayerLibraryBtn" type="button" class="secondary small">刷新</button>
-            </div>
-            <div id="psdLayerLibrarySummary" class="target-status"></div>
-            <div id="psdLayerLibraryList" class="psd-layer-library-list"></div>
-            <div id="psdLayerLibraryDetail" class="psd-layer-library-detail"></div>
-          </div>
-        </section>
       </section>
 
       <aside class="inspector">
