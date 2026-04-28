@@ -235,7 +235,7 @@
 - [x] UI 模型路由面板增加 live probe、使用历史和最近回退展示。
 - [x] 增加模型路由回归检查 API，汇总配置、最近调用、回退边界和非阻断策略。
 - [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证。
-- [ ] 远端冷启动回归并推送 GitHub。
+- [x] 远端冷启动回归并推送 GitHub。
 
 ## 回顾
 - 新增 `/api/model-routes/live-probe`：只对已配置 Base URL 的真实 provider 请求 `/v1/models`；当前本机 3 路模型均未配置，因此 live probe 全部返回 `skipped`，没有伪造连通。
@@ -246,3 +246,5 @@
 - UI 模型路由面板新增“连通性检查”“模型回归”和“模型使用记录”，桌面 1440x1200 与移动 390x844 Playwright 验证通过，控制台无 error、无横向溢出。
 - `npm run check`、`node --check public/app.js`、`git diff --check` 均通过。
 - 飞书发送历史仍为 2 条（1 sent / 1 failed duplicate guard），本轮未新增飞书消息，未发送 PSD。
+- 已推送实现到远端 main：`610227d15bb77bd2df678386e4c686b538e645de`。
+- 远端冷启动克隆 `/tmp/ps-console-model-ops-cold.rG2Fo6/repo` 通过：`npm ci`、`npm run check`、`node --check public/app.js`、备用端口 `3604` 的 `/api/status`、`/api/model-routes/live-probe`、`/api/models/image/generate` fallback、`/api/models/vision/qa` fallback、`/api/regression/model-routing`、`/api/model-routes/usage-history` 均正常。
