@@ -51,6 +51,13 @@
   - `git diff --check`
   - API 响应扫描未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-`。
   - tracked-file secret scan 未发现 `sk-...` 明文。
+- 已推送远端 main：
+  - `8aecfb83abc286f3c855dea7690da30c003ef063` — `Fix vision image compatibility for PSD rebuild`
+- 远端 fresh clone 回归：
+  - clone HEAD：`8aecfb83abc286f3c855dea7690da30c003ef063`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过。
 
 # 2026-04-28 任务 — 智能拆层 / PSD 重建 MVP 与图片上传
 
