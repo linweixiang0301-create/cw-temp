@@ -37,6 +37,10 @@ type ModelRequestResult = {
   model: string;
   route: ResolvedModelRoute;
   response: unknown;
+  selectedRole: ModelRouteAttempt['role'];
+  apiKeyEnv: string | null;
+  usage: Record<string, unknown> | null;
+  attempts: ModelRouteAttempt[];
 };
 
 type ImageRequestResult = ModelRequestResult & {
@@ -45,6 +49,16 @@ type ImageRequestResult = ModelRequestResult & {
     buffer: Buffer;
     source: string;
   };
+};
+
+type ModelRouteAttempt = {
+  model: string;
+  role: 'primary' | 'fallback' | 'requested';
+  apiKeyEnv: string | null;
+  endpointKind?: 'images' | 'chat';
+  status: 'success' | 'failed';
+  durationMs: number;
+  error?: string;
 };
 
 type ImageGenerationInput = {
@@ -104,6 +118,21 @@ function envValue(name: string): string | null {
   return value || null;
 }
 
+function envModelApiKeyEnvs(meta: RouteMeta): Record<string, string> {
+  const raw = envValue(`${meta.envPrefix}_MODEL_API_KEY_ENVS`);
+  if (!raw) return {};
+  return raw.split(/[,\n]/).reduce<Record<string, string>>((acc, entry) => {
+    const line = entry.trim();
+    if (!line || line.startsWith('#')) return acc;
+    const separatorIndex = line.includes('=') ? line.indexOf('=') : line.indexOf(':');
+    if (separatorIndex <= 0) return acc;
+    const model = line.slice(0, separatorIndex).trim();
+    const envName = line.slice(separatorIndex + 1).trim();
+    if (model && envName) acc[model] = envName;
+    return acc;
+  }, {});
+}
+
 function routeMeta(key: ModelRouteKey): RouteMeta {
   return ROUTES.find((item) => item.key === key) || ROUTES[0]!;
 }
@@ -121,7 +150,7 @@ function envRoute(meta: RouteMeta): ModelRouteRecord | null {
     baseUrl: envValue(`${meta.envPrefix}_BASE_URL`),
     apiKeyEnv: envValue(`${meta.envPrefix}_API_KEY_ENV`)
       || (envValue(`${meta.envPrefix}_API_KEY`) ? `${meta.envPrefix}_API_KEY` : null),
-    modelApiKeyEnvs: {},
+    modelApiKeyEnvs: envModelApiKeyEnvs(meta),
     enabled: true,
     createdAt: now,
     updatedAt: now,
@@ -256,6 +285,17 @@ function headersFor(route: ResolvedModelRoute, model?: string | null): Record<st
     'Content-Type': 'application/json',
     ...(credential.apiKey ? { Authorization: `Bearer ${credential.apiKey}` } : {}),
   };
+}
+
+function roleForModel(route: ResolvedModelRoute, model: string): ModelRouteAttempt['role'] {
+  if (model === route.primary) return 'primary';
+  if (model === route.fallback) return 'fallback';
+  return 'requested';
+}
+
+function usageFromResponse(payload: unknown): Record<string, unknown> | null {
+  const usage = objectValue(payload).usage;
+  return usage && typeof usage === 'object' ? usage as Record<string, unknown> : null;
 }
 
 async function fetchJsonWithTimeout(url: string, body: unknown, headers: Record<string, string>): Promise<unknown> {
@@ -457,20 +497,36 @@ async function callModels(
     throw new ModelRouteError(`${route.label}未就绪。`, { route, findings: route.findings });
   }
   const models = [...new Set([preferredModel, route.primary, route.fallback].map((item) => String(item || '').trim()).filter(Boolean))];
-  const failures: Array<{ model: string; error: string }> = [];
+  const attempts: ModelRouteAttempt[] = [];
   for (const model of models) {
+    const role = roleForModel(route, model);
+    const apiKeyEnv = credentialForRoute(route, model).apiKeyEnv;
+    const startedAt = Date.now();
     try {
       const request = makeRequest(model);
+      const response = await fetchJsonWithTimeout(request.endpoint, request.payload, headersFor(route, model));
+      attempts.push({ model, role, apiKeyEnv, status: 'success', durationMs: Date.now() - startedAt });
       return {
         model,
         route,
-        response: await fetchJsonWithTimeout(request.endpoint, request.payload, headersFor(route, model)),
+        response,
+        selectedRole: role,
+        apiKeyEnv,
+        usage: usageFromResponse(response),
+        attempts,
       };
     } catch (error) {
-      failures.push({ model, error: error instanceof Error ? error.message : String(error) });
+      attempts.push({
+        model,
+        role,
+        apiKeyEnv,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  throw new ModelRouteError('主模型与备选模型均未生成可用结果。', { route, failures }, 502);
+  throw new ModelRouteError('主模型与备选模型均未生成可用结果。', { route, failures: attempts, attempts }, 502);
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -541,10 +597,12 @@ async function callImageGenerationModels(
   const prompt = String(input.prompt || '').trim();
   const size = input.size || DEFAULT_IMAGE_SIZE;
   const models = [...new Set([input.modelId, route.primary, route.fallback].map((item) => String(item || '').trim()).filter(Boolean))];
-  const failures: Array<{ model: string; endpointKind: string; error: string }> = [];
+  const attempts: ModelRouteAttempt[] = [];
 
   for (const model of models) {
-    const attempts: Array<{ endpointKind: 'images' | 'chat'; endpoint: string; payload: unknown }> = [
+    const role = roleForModel(route, model);
+    const apiKeyEnv = credentialForRoute(route, model).apiKeyEnv;
+    const endpointAttempts: Array<{ endpointKind: 'images' | 'chat'; endpoint: string; payload: unknown }> = [
       {
         endpointKind: 'images',
         endpoint: endpointFor(route, '/images/generations'),
@@ -579,28 +637,45 @@ async function callImageGenerationModels(
       },
     ];
 
-    for (const attempt of attempts) {
+    for (const attempt of endpointAttempts) {
+      const startedAt = Date.now();
       try {
         const response = await fetchJsonWithTimeout(attempt.endpoint, attempt.payload, headersFor(route, model));
         const image = await extractGeneratedImage(response);
+        attempts.push({
+          model,
+          role,
+          apiKeyEnv,
+          endpointKind: attempt.endpointKind,
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+        });
         return {
           model,
           route,
           response,
+          selectedRole: role,
+          apiKeyEnv,
+          usage: usageFromResponse(response),
+          attempts,
           endpointKind: attempt.endpointKind,
           image,
         };
       } catch (error) {
-        failures.push({
+        attempts.push({
           model,
+          role,
+          apiKeyEnv,
           endpointKind: attempt.endpointKind,
+          status: 'failed',
+          durationMs: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
   }
 
-  throw new ModelRouteError('主模型与备选模型均未生成可用图片。', { route, failures }, 502);
+  throw new ModelRouteError('主模型与备选模型均未生成可用图片。', { route, failures: attempts, attempts }, 502);
 }
 
 function sanitizeName(value: string): string {
@@ -647,6 +722,10 @@ export async function generateImageArtifact(input: ImageGenerationInput): Promis
     mime: detected.mime,
     source: request.image.source,
     endpointKind: request.endpointKind,
+    selectedRole: request.selectedRole,
+    apiKeyEnv: request.apiKeyEnv,
+    usage: request.usage,
+    attempts: request.attempts,
   };
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
   return {
@@ -713,6 +792,10 @@ export async function runVisionQualityCheck(input: VisionQaInput): Promise<Recor
     qa: {
       checkedAt: new Date().toISOString(),
       model: request.model,
+      selectedRole: request.selectedRole,
+      apiKeyEnv: request.apiKeyEnv,
+      usage: request.usage,
+      attempts: request.attempts,
       provider: request.route.provider,
       sourceKind: request.route.sourceKind,
       imagePath,

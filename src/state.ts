@@ -154,6 +154,22 @@ export type ModelUsageRecord = {
     mode?: string | null;
     reason?: string | null;
   } | null;
+  audit?: {
+    routePrimary?: string | null;
+    routeFallback?: string | null;
+    selectedRole?: string | null;
+    apiKeyEnv?: string | null;
+    usage?: Record<string, unknown> | null;
+    attempts?: Array<{
+      model?: string | null;
+      role?: string | null;
+      apiKeyEnv?: string | null;
+      endpointKind?: string | null;
+      status?: string | null;
+      durationMs?: number | null;
+      error?: string | null;
+    }>;
+  } | null;
   findings?: Array<{ code?: string; message?: string; severity?: string }>;
   error?: string | null;
   nonBlocking: boolean;
@@ -535,6 +551,7 @@ export function addModelUsageRecord(input: Omit<ModelUsageRecord, 'id' | 'create
     input: input.input || null,
     artifact: input.artifact || null,
     fallback: input.fallback || null,
+    audit: input.audit || null,
     findings: Array.isArray(input.findings) ? input.findings : [],
     error: input.error ?? null,
     nonBlocking: input.nonBlocking !== false,

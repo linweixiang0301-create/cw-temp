@@ -602,6 +602,33 @@ function safeAddModelUsageRecord(input: Parameters<typeof addModelUsageRecord>[0
   }
 }
 
+function modelAudit(route: ReturnType<typeof getResolvedModelRoute>, source: Record<string, any>, error?: unknown): Record<string, unknown> {
+  const details = (errorDetails(error) || {}) as Record<string, any>;
+  const attempts = Array.isArray(source.attempts)
+    ? source.attempts
+    : Array.isArray(details.attempts)
+      ? details.attempts
+      : Array.isArray(details.failures)
+        ? details.failures
+        : [];
+  return {
+    routePrimary: route.primary,
+    routeFallback: route.fallback,
+    selectedRole: source.selectedRole || null,
+    apiKeyEnv: source.apiKeyEnv || null,
+    usage: source.usage && typeof source.usage === 'object' ? source.usage : null,
+    attempts: attempts.map((attempt: Record<string, any>) => ({
+      model: attempt.model || null,
+      role: attempt.role || null,
+      apiKeyEnv: attempt.apiKeyEnv || null,
+      endpointKind: attempt.endpointKind || null,
+      status: attempt.status || (attempt.error ? 'failed' : null),
+      durationMs: typeof attempt.durationMs === 'number' ? attempt.durationMs : null,
+      error: attempt.error || null,
+    })),
+  };
+}
+
 function recordModelImageSuccess(body: Record<string, unknown>, result: Record<string, unknown>, durationMs: number): void {
   const route = getResolvedModelRoute('image');
   const artifact = (result.artifact || {}) as Record<string, any>;
@@ -624,6 +651,7 @@ function recordModelImageSuccess(body: Record<string, unknown>, result: Record<s
       sizeBytes: typeof artifact.sizeBytes === 'number' ? artifact.sizeBytes : null,
       mime: artifact.mime || null,
     },
+    audit: modelAudit(route, artifact),
     nonBlocking: true,
   });
 }
@@ -647,6 +675,7 @@ function recordModelImageFallback(body: Record<string, unknown>, error: unknown,
       mode: 'manual_file',
       reason: safeError(error),
     },
+    audit: modelAudit(route, {}, error),
     findings: route.findings,
     error: safeError(error),
     nonBlocking: true,
@@ -671,6 +700,7 @@ function recordModelVisionSuccess(body: Record<string, unknown>, result: Record<
     artifact: {
       path: qa.imagePath || null,
     },
+    audit: modelAudit(route, qa),
     nonBlocking: qa.nonBlocking !== false,
   });
 }
@@ -693,6 +723,7 @@ function recordModelVisionFallback(body: Record<string, unknown>, error: unknown
       mode: 'manual_review',
       reason: safeError(error),
     },
+    audit: modelAudit(route, {}, error),
     findings: route.findings,
     error: safeError(error),
     nonBlocking: true,

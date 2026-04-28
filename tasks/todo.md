@@ -1,3 +1,68 @@
+# 2026-04-28 任务 — 模型审计增强与冷启动回归
+
+## 目标
+- 模型使用审计补充主备命中、使用的 `apiKeyEnv`、provider usage、fallback 尝试链路。
+- UI 模型使用记录展示新增审计字段，方便判断成本、稳定性和是否命中 fallback。
+- 完成无 `.env.local` 与有 `.env.local` 两种冷启动回归，证明无密钥不崩、有密钥主备 ready。
+
+## 计划
+- [x] 扩展模型调用返回值，携带 attempts、selectedRole、apiKeyEnv、usage。
+- [x] 扩展本地 `ModelUsageRecord`，保存 audit 元数据但不保存密钥。
+- [x] 更新 image / vision 成功和 fallback 审计写入。
+- [x] UI 模型使用记录显示 primary/fallback、apiKeyEnv、token usage 和尝试链路摘要。
+- [x] 用真实 `final.png` 跑一次 vision fallback 演练，确认审计字段落地。
+- [x] 做无 `.env.local` 与有 `.env.local` 冷启动回归。
+- [x] 运行检查、记录回顾并推送远端。
+
+## 回顾
+- 已扩展模型调用内部返回：
+  - `selectedRole`：`primary` / `fallback` / `requested`
+  - `apiKeyEnv`：本次实际使用的环境变量名
+  - `usage`：provider 返回的 token usage
+  - `attempts`：每次尝试的模型、角色、env 名、endpointKind、状态、耗时和错误摘要
+- `ModelUsageRecord` 新增 `audit` 字段；只记录环境变量名和调用元数据，不记录密钥。
+- image / vision 成功记录和 fallback 记录都会写入 `audit`。
+- UI 模型使用记录已显示：
+  - 命中角色与 key env
+  - 主备模型
+  - token usage
+  - 尝试链路摘要
+- 真实审计验证：
+  - 临时把 vision 主模型改为 `gemini-3-flash-preview-audit-rehearsal-unavailable`，备选保持 `gpt-5.5`。
+  - 使用当前真实 `final.png` 调用 `/api/models/vision/qa`。
+  - API 返回 `completed`，实际命中 `gpt-5.5`，耗时约 `16.3s`。
+  - 最新 usage 记录 audit：
+    - selectedRole：`fallback`
+    - apiKeyEnv：`GPT55_FLASH_API_KEY`
+    - usage：`prompt_tokens=3085`、`completion_tokens=404`、`total_tokens=3489`
+    - attempts：主模型 HTTP 403 失败，备选 `gpt-5.5` 成功
+  - 演练后已恢复生产 vision 路由：`gemini-3-flash-preview` + `gpt-5.5`。
+- 冷启动回归：
+  - 无 `.env.local`、无 provider env、全新 runtime：
+    - image 未配置但 `/api/models/image/generate` 返回 `fallback.manual_file`
+    - vision 未配置但 `/api/models/vision/qa` 返回 `fallback.manual_review`
+    - 没有崩溃，没有生成假文件
+  - 有 `.env.local`、全新 runtime：
+    - image ready：`gpt-image-2` + `gemini-3-pro-image-preview-4k`
+    - vision ready：`gemini-3-flash-preview` + `gpt-5.5`
+    - live probe matched image 两个模型和 vision 两个模型
+- 为了支持全新 runtime，`.env.local` / `.env.example` 已加入默认模型路由 env：
+  - `PS_AUTOMATION_IMAGE_MODEL`
+  - `PS_AUTOMATION_IMAGE_FALLBACK_MODEL`
+  - `PS_AUTOMATION_IMAGE_BASE_URL`
+  - `PS_AUTOMATION_IMAGE_API_KEY_ENV`
+  - `PS_AUTOMATION_VISION_MODEL`
+  - `PS_AUTOMATION_VISION_FALLBACK_MODEL`
+  - `PS_AUTOMATION_VISION_BASE_URL`
+  - `PS_AUTOMATION_VISION_API_KEY_ENV`
+  - `PS_AUTOMATION_VISION_MODEL_API_KEY_ENVS`
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - 仓库密钥扫描无 `sk-...` 明文
+- 本轮未发送飞书消息，未外发 PSD。
+
 # 2026-04-28 任务 — vision 双凭据生产化闭环 1-3 项
 
 ## 目标

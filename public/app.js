@@ -448,6 +448,30 @@ async function probeModelRoutesLive() {
   return payload;
 }
 
+function modelUsageAuditText(audit) {
+  if (!audit || typeof audit !== 'object') return [];
+  const rows = [];
+  const role = audit.selectedRole || '-';
+  const apiKeyEnv = audit.apiKeyEnv || '-';
+  const primary = audit.routePrimary || '-';
+  const fallback = audit.routeFallback || '-';
+  rows.push(`命中 ${role} · key ${apiKeyEnv} · 主 ${primary} · 备 ${fallback}`);
+  const usage = audit.usage && typeof audit.usage === 'object' ? audit.usage : null;
+  if (usage) {
+    const prompt = usage.prompt_tokens ?? usage.input_tokens ?? '-';
+    const completion = usage.completion_tokens ?? usage.output_tokens ?? '-';
+    const total = usage.total_tokens ?? '-';
+    rows.push(`tokens prompt=${prompt} completion=${completion} total=${total}`);
+  }
+  const attempts = Array.isArray(audit.attempts) ? audit.attempts : [];
+  if (attempts.length > 0) {
+    rows.push(`尝试 ${attempts.map((attempt) => (
+      `${attempt.model || '-'}:${attempt.status || '-'}${attempt.role ? `/${attempt.role}` : ''}${attempt.durationMs ? `/${attempt.durationMs}ms` : ''}${attempt.endpointKind ? `/${attempt.endpointKind}` : ''}`
+    )).join(' -> ')}`);
+  }
+  return rows;
+}
+
 function renderModelUsageHistory(records = state.modelUsageHistory) {
   const el = $('modelUsageHistory');
   if (!el) return;
@@ -459,11 +483,13 @@ function renderModelUsageHistory(records = state.modelUsageHistory) {
     const artifactPath = record.artifact?.path || record.artifact?.metadataPath || '';
     const fallback = record.fallback?.reason || record.error || '';
     const detail = artifactPath || fallback || record.input?.imagePath || record.input?.promptPreview || '-';
+    const auditRows = modelUsageAuditText(record.audit);
     return `
       <div class="model-usage-card ${escapeHtml(record.status || 'fallback')}">
         <strong>${escapeHtml(record.operation || '-')} · ${escapeHtml(record.status || '-')}</strong>
         <span>${escapeHtml(record.routeKey || '-')} · ${escapeHtml(record.model || '未选择模型')} · ${escapeHtml(formatLocalDateTime(record.createdAt))}</span>
         <small>${escapeHtml(detail)}</small>
+        ${auditRows.map((row) => `<small>${escapeHtml(row)}</small>`).join('')}
         <small>${escapeHtml(record.durationMs ? `${record.durationMs}ms` : '-')} · ${record.nonBlocking ? '不阻断主链路' : '可能阻断'}</small>
       </div>
     `;
