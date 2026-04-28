@@ -13,6 +13,8 @@ const state = {
   modelOrchestration: null,
   imageUploads: [],
   psdRebuildJobs: [],
+  psdRebuildLibrary: null,
+  psdRebuildLibraryDetail: null,
   lastImageUpload: null,
   lastPsdRebuildJob: null,
   modelRouteConfigKey: 'image',
@@ -270,6 +272,7 @@ function renderStatus(payload) {
   state.modelUsageHistory = Array.isArray(payload.modelUsageHistory) ? payload.modelUsageHistory : [];
   state.imageUploads = Array.isArray(payload.imageUploads) ? payload.imageUploads : [];
   state.psdRebuildJobs = Array.isArray(payload.psdRebuildJobs) ? payload.psdRebuildJobs : [];
+  state.psdRebuildLibrary = payload.psdRebuildLibrary || state.psdRebuildLibrary;
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -865,6 +868,7 @@ function renderPsdRebuildPanel() {
   modelSelect.innerHTML = modelOptionsForRouteHtml('vision', currentModel, '未配置');
   if (currentModel && modelRouteModels('vision').includes(currentModel)) modelSelect.value = currentModel;
   renderPsdRebuildHistory();
+  renderPsdLayerLibrary();
 }
 
 function layerManifestSummary(layerManifest) {
@@ -946,6 +950,190 @@ function renderPsdRebuildJob(job, layerManifest = null, photoshop = null) {
   `;
 }
 
+function psdLibraryItems() {
+  return Array.isArray(state.psdRebuildLibrary?.items) ? state.psdRebuildLibrary.items : [];
+}
+
+function psdLibraryStatusLabel(item) {
+  if (item?.outputPsdExists || item?.status === 'psd_exported') return 'PSD 已生成';
+  if (item?.status === 'analyzed') return '待生成 PSD';
+  if (item?.status === 'fallback') return '单图层 fallback';
+  return item?.status || '未知';
+}
+
+function psdLibraryStatusTone(item) {
+  if (item?.outputPsdExists || item?.status === 'psd_exported') return 'ready';
+  if (item?.status === 'failed') return 'blocked';
+  return 'running';
+}
+
+function renderPsdLayerLibraryItem(item, selectedId = '') {
+  const previewPath = item.previewImagePath || item.sourceImagePath || '';
+  const preview = previewPath
+    ? `<img src="${escapeHtml(localImageUrl(previewPath))}" alt="拆解图层预览">`
+    : '<div class="psd-layer-library-empty">无预览</div>';
+  const selectedClass = item.id === selectedId ? 'is-selected' : '';
+  return `
+    <div class="psd-layer-library-item ${selectedClass}">
+      <div class="psd-layer-library-thumb">${preview}</div>
+      <div class="psd-layer-library-body">
+        <div class="job-status ${psdLibraryStatusTone(item)}">
+          <strong>${escapeHtml(psdLibraryStatusLabel(item))}</strong>
+          <span>${escapeHtml(fileNameFromPath(item.sourceImagePath || item.id || '-'))}</span>
+        </div>
+        <dl class="compact-receipt">
+          <div><dt>job</dt><dd>${escapeHtml(item.id || '-')}</dd></div>
+          <div><dt>时间</dt><dd>${escapeHtml(formatLocalDateTime(item.updatedAt || item.generatedAt || item.createdAt))}</dd></div>
+          <div><dt>图层</dt><dd>${escapeHtml(`${item.layerCount || 0} layers · text ${item.textLayerCount || 0}`)}</dd></div>
+          <div><dt>模型</dt><dd>${escapeHtml([item.model || '-', item.selectedRole || ''].filter(Boolean).join(' · '))}</dd></div>
+        </dl>
+        <div class="button-row stretch psd-layer-library-actions">
+          <button type="button" class="secondary small" data-psd-library-detail="${escapeHtml(item.id)}">详情</button>
+          <button type="button" class="secondary small" data-psd-library-load="${escapeHtml(item.id)}">载入</button>
+          <button type="button" class="small" data-psd-library-export="${escapeHtml(item.id)}">生成 PSD</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPsdLayerLibrary() {
+  const listEl = $('psdLayerLibraryList');
+  const summaryEl = $('psdLayerLibrarySummary');
+  const detailEl = $('psdLayerLibraryDetail');
+  if (!listEl || !summaryEl || !detailEl) return;
+  const items = psdLibraryItems();
+  const exportedCount = items.filter((item) => item.outputPsdExists || item.status === 'psd_exported').length;
+  const selectedId = state.psdRebuildLibraryDetail?.job?.id || state.lastPsdRebuildJob?.id || '';
+  summaryEl.innerHTML = `
+    <span>库目录</span>
+    <small>${escapeHtml(state.psdRebuildLibrary?.root || '~/.codex/ps-automation/psd-rebuild')}</small>
+    <span>记录</span>
+    <small>${escapeHtml(`${items.length} 个 job · ${exportedCount} 个 PSD 已生成`)}</small>
+  `;
+  if (!items.length) {
+    listEl.innerHTML = '<div class="empty">暂无本机拆解图层作业。</div>';
+  } else {
+    listEl.innerHTML = items.slice(0, 12).map((item) => renderPsdLayerLibraryItem(item, selectedId)).join('');
+  }
+  if (!state.psdRebuildLibraryDetail) {
+    detailEl.innerHTML = '<div class="empty">选择一个历史 job 查看 manifest 图层和本地产物状态。</div>';
+  }
+  bindPsdLayerLibraryActions();
+}
+
+function renderPsdLayerLibraryDetail(payload, photoshop = null) {
+  const detailEl = $('psdLayerLibraryDetail');
+  if (!detailEl) return;
+  const job = payload?.job || null;
+  const layerManifest = payload?.layerManifest || null;
+  if (!job) {
+    detailEl.innerHTML = '<div class="empty">未读取到拆解图层详情。</div>';
+    return;
+  }
+  const compatibility = job.visionInput?.compatibility || layerManifest?.visionInput?.compatibility || null;
+  const findings = (job.findings || []).map((item) => `
+    <div class="issue ${item.severity === 'warning' ? 'warn' : item.severity === 'error' ? 'err' : 'ok'}">
+      <b>${escapeHtml(item.code || 'finding')}</b>${escapeHtml(item.message || '-')}
+    </div>
+  `).join('');
+  detailEl.innerHTML = `
+    <div class="psd-layer-library-detail-card">
+      <div class="section-head compact">
+        <div>
+          <h3>${escapeHtml(psdLibraryStatusLabel(job))}</h3>
+          <p>${escapeHtml(job.summary || layerManifest?.summary || job.id || '-')}</p>
+        </div>
+        <div class="button-row psd-layer-library-detail-actions">
+          <button type="button" class="secondary small" data-psd-library-load="${escapeHtml(job.id)}">载入当前</button>
+          <button type="button" class="small" data-psd-library-export="${escapeHtml(job.id)}">生成 PSD</button>
+        </div>
+      </div>
+      <dl class="compact-receipt">
+        <div><dt>目录</dt><dd>${escapeHtml(job.directoryPath || '-')}</dd></div>
+        <div><dt>Source</dt><dd>${escapeHtml(job.sourceImagePath || '-')}</dd></div>
+        <div><dt>Manifest</dt><dd>${escapeHtml(job.layerManifestPath || '-')}</dd></div>
+        <div><dt>JSX</dt><dd>${escapeHtml(job.photoshopScriptPath || '-')}</dd></div>
+        <div><dt>PSD</dt><dd>${escapeHtml(job.outputPsdExists ? `${job.outputPsdPath} · ${formatBytes(job.outputPsdFile?.sizeBytes)}` : '未生成')}</dd></div>
+        <div><dt>Preview</dt><dd>${escapeHtml(job.previewImagePath || '未生成')}</dd></div>
+        <div><dt>兼容输入</dt><dd>${escapeHtml(compatibility?.applied ? `${compatibility.originalWidth}x${compatibility.originalHeight} -> ${compatibility.requestWidth}x${compatibility.requestHeight}` : '未应用')}</dd></div>
+        <div><dt>边界</dt><dd>PSD local_only，不外发</dd></div>
+      </dl>
+      ${photoshop ? `
+        <div class="issue ${photoshop.outputPsdExists ? 'ok' : 'warn'}">
+          <b>photoshop</b>${escapeHtml(photoshop.outputPsdExists ? '本机 PSD 已生成。' : photoshop.result?.error || '未生成 PSD。')}
+        </div>
+      ` : ''}
+      ${findings ? `<div class="issue-list">${findings}</div>` : ''}
+      ${renderLayerManifestPreview(layerManifest)}
+    </div>
+  `;
+  bindPsdLayerLibraryActions();
+}
+
+async function refreshPsdLayerLibrary() {
+  const payload = await api('/api/psd-rebuild/library?limit=50');
+  state.psdRebuildLibrary = payload;
+  renderPsdLayerLibrary();
+  return payload;
+}
+
+async function loadPsdLayerLibraryDetail(jobId) {
+  const payload = await api(`/api/psd-rebuild/library/${encodeURIComponent(jobId)}`);
+  state.psdRebuildLibraryDetail = payload;
+  renderPsdLayerLibraryDetail(payload);
+  renderPsdLayerLibrary();
+  return payload;
+}
+
+async function loadPsdLayerLibraryJobToCurrent(jobId) {
+  const payload = await loadPsdLayerLibraryDetail(jobId);
+  state.lastPsdRebuildJob = payload.job || null;
+  setMessage('psdRebuildResults', renderPsdRebuildJob(payload.job, payload.layerManifest), 'html');
+  return payload;
+}
+
+async function exportPsdLayerLibraryJob(jobId) {
+  const confirmed = window.confirm('执行本机 Photoshop JSX 生成 rebuilt.psd？PSD 只保存在本地，不会发送到飞书。');
+  if (!confirmed) return null;
+  const safeJobId = window.CSS?.escape ? CSS.escape(String(jobId || '')) : String(jobId || '').replace(/"/g, '\\"');
+  const button = document.querySelector(`[data-psd-library-export="${safeJobId}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = '生成中...';
+  }
+  try {
+    const payload = await api(`/api/psd-rebuild/library/${encodeURIComponent(jobId)}/export-psd`, {
+      method: 'POST',
+      body: '{}',
+    });
+    state.psdRebuildLibrary = payload.library || state.psdRebuildLibrary;
+    state.psdRebuildLibraryDetail = payload;
+    state.lastPsdRebuildJob = payload.job || state.lastPsdRebuildJob;
+    renderPsdLayerLibraryDetail(payload, payload.photoshop);
+    renderPsdLayerLibrary();
+    setMessage('psdRebuildResults', renderPsdRebuildJob(payload.job, payload.layerManifest, payload.photoshop), 'html');
+    return payload;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '生成 PSD';
+    }
+  }
+}
+
+function bindPsdLayerLibraryActions() {
+  document.querySelectorAll('[data-psd-library-detail]').forEach((button) => {
+    button.onclick = () => void loadPsdLayerLibraryDetail(button.dataset.psdLibraryDetail);
+  });
+  document.querySelectorAll('[data-psd-library-load]').forEach((button) => {
+    button.onclick = () => void loadPsdLayerLibraryJobToCurrent(button.dataset.psdLibraryLoad);
+  });
+  document.querySelectorAll('[data-psd-library-export]').forEach((button) => {
+    button.onclick = () => void exportPsdLayerLibraryJob(button.dataset.psdLibraryExport);
+  });
+}
+
 function renderPsdRebuildHistory() {
   const el = $('psdRebuildResults');
   if (!el) return;
@@ -1009,6 +1197,7 @@ async function startPsdRebuild() {
     state.psdRebuildJobs = Array.isArray(payload.jobs) ? payload.jobs : state.psdRebuildJobs;
     state.lastPsdRebuildJob = payload.job || null;
     setMessage('psdRebuildResults', renderPsdRebuildJob(payload.job, payload.layerManifest, payload.photoshop), 'html');
+    await refreshPsdLayerLibrary().catch(() => {});
     await refreshModelUsageHistory().catch(() => {});
     return payload.job;
   } finally {
@@ -4236,6 +4425,17 @@ $('startPsdRebuildBtn').addEventListener('click', async () => {
 $('psdRebuildUploadSelect').addEventListener('change', () => {
   const upload = selectedPsdRebuildUpload();
   if (upload?.storedPath) $('psdRebuildImagePath').value = upload.storedPath;
+});
+
+$('refreshPsdLayerLibraryBtn').addEventListener('click', async () => {
+  try {
+    $('refreshPsdLayerLibraryBtn').disabled = true;
+    await refreshPsdLayerLibrary();
+  } catch (error) {
+    setMessage('psdLayerLibraryDetail', error.payload || error.message);
+  } finally {
+    $('refreshPsdLayerLibraryBtn').disabled = false;
+  }
 });
 
 $('checkDesign006LoginBtn').addEventListener('click', async () => {

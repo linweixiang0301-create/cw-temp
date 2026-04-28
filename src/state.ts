@@ -677,6 +677,12 @@ export function listPsdRebuildJobs(): PsdRebuildJobRecord[] {
   return readState().psdRebuildJobs.slice(0, 50);
 }
 
+export function getPsdRebuildJob(id: string): PsdRebuildJobRecord | null {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return null;
+  return readState().psdRebuildJobs.find((record) => record.id === normalizedId) || null;
+}
+
 export function addPsdRebuildJob(input: Omit<PsdRebuildJobRecord, 'id' | 'createdAt' | 'updatedAt' | 'psdDelivery'> & {
   id?: string;
   createdAt?: string;

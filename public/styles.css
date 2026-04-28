@@ -836,6 +836,79 @@ button:disabled {
   min-width: 0;
 }
 
+.psd-layer-library {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.psd-layer-library-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.psd-layer-library-item {
+  background: #ffffff;
+  border: 1px solid #dbe7f7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 86px minmax(0, 1fr);
+  padding: 8px;
+}
+
+.psd-layer-library-item.is-selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.14);
+}
+
+.psd-layer-library-thumb img,
+.psd-layer-library-empty {
+  aspect-ratio: 1;
+  background: #eef2f7;
+  border: 1px solid #e6ecf5;
+  border-radius: 7px;
+  color: #64748b;
+  display: grid;
+  font-size: 12px;
+  place-items: center;
+  width: 86px;
+}
+
+.psd-layer-library-thumb img {
+  object-fit: contain;
+}
+
+.psd-layer-library-body {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.button-row.stretch.psd-layer-library-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.psd-layer-library-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.psd-layer-library-detail-card {
+  background: #f8fafc;
+  border: 1px solid #dbe7f7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.psd-layer-library-detail-actions {
+  align-self: start;
+}
+
 .psd-layer-manifest {
   display: grid;
   gap: 8px;
@@ -2776,6 +2849,8 @@ pre {
   .source-grid,
   .psd-rebuild-grid,
   .psd-rebuild-card,
+  .psd-layer-library-list,
+  .psd-layer-library-item,
   .psd-layer-list,
   .design006-auth-card,
   .design006-download-preflight-card,
@@ -2804,7 +2879,9 @@ pre {
 
   .artifact-preview img,
   .artifact-preview-empty,
-  .psd-rebuild-preview img {
+  .psd-rebuild-preview img,
+  .psd-layer-library-thumb img,
+  .psd-layer-library-empty {
     width: 100%;
   }
 

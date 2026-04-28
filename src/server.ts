@@ -16,7 +16,12 @@ import {
   getPhotoshopStatus,
   preflightPhotoshopJob,
 } from './photoshop-service.js';
-import { createPsdRebuildJob } from './psd-rebuild-service.js';
+import {
+  createPsdRebuildJob,
+  exportPsdRebuildLibraryJob,
+  getPsdRebuildLibraryJob,
+  listPsdRebuildLibrary,
+} from './psd-rebuild-service.js';
 import {
   addFeishuSendRecord,
   addModelUsageRecord,
@@ -1184,6 +1189,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         modelUsageHistory: listModelUsageHistory(),
         imageUploads: listImageUploads(),
         psdRebuildJobs: listPsdRebuildJobs(),
+        psdRebuildLibrary: listPsdRebuildLibrary({ limit: 30 }),
       });
       return true;
     }
@@ -1211,6 +1217,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         ok: true,
         jobs: listPsdRebuildJobs(),
       });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/psd-rebuild/library') {
+      sendJson(res, 200, listPsdRebuildLibrary({
+        limit: Number(url.searchParams.get('limit') || 50),
+      }));
+      return true;
+    }
+
+    const psdLibraryMatch = url.pathname.match(/^\/api\/psd-rebuild\/library\/([^/]+)$/);
+    if (psdLibraryMatch && req.method === 'GET') {
+      const detail = getPsdRebuildLibraryJob(decodeURIComponent(psdLibraryMatch[1] || ''));
+      sendJson(res, 200, {
+        ok: true,
+        ...detail,
+      });
+      return true;
+    }
+
+    const psdLibraryExportMatch = url.pathname.match(/^\/api\/psd-rebuild\/library\/([^/]+)\/export-psd$/);
+    if (psdLibraryExportMatch && req.method === 'POST') {
+      sendJson(res, 200, await exportPsdRebuildLibraryJob(decodeURIComponent(psdLibraryExportMatch[1] || '')));
       return true;
     }
 

@@ -1,3 +1,52 @@
+# 2026-04-28 任务 — 拆解图层库与 PSD 重建快捷调用
+
+## 目标
+- 在 UI 中新增“拆解图层库”分区，集中查看本机 `~/.codex/ps-automation/psd-rebuild` 下的真实 PSD 重建作业。
+- 提供历史列表、单个 job 详情、manifest 图层摘要、源图与预览路径、PSD 是否已导出等状态。
+- 提供快捷操作：载入为当前拆层结果、执行已有 `rebuild.jsx` 生成本地 `rebuilt.psd` / `preview.png`。
+- 保持 PSD 只在本地保存，不外发；不影响现有 Photoshop final.png 与飞书只发 PNG 主链路。
+
+## 计划
+- [x] 梳理现有 `psd-rebuild-service`、`state`、`server`、UI 结构，确认复用边界。
+- [x] 新增本地图层库 API：扫描真实 job 目录，读取 manifest / 产物状态，返回列表与详情。
+- [x] 新增执行已有 Photoshop JSX 的 API，生成后回填本地 PSD / 预览状态。
+- [x] UI 新增拆解图层库分区：列表、详情、状态、图层摘要、快捷操作。
+- [x] 用真实历史 job 验证 API 与 UI 数据；运行类型检查、前端语法检查、密钥扫描并记录回顾。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/psd-rebuild/library`，确认返回真实历史 job，不使用 mock。
+- 真实调用 `/api/psd-rebuild/library/:jobId`，确认能读取指定 job 的 manifest 与产物状态。
+- 对已有 job 调用 PSD 导出 API，确认失败/成功都能给出真实回执，不伪造 PSD。
+- 扫描 API 响应和 tracked files，确认没有 token/cookie/key 明文。
+
+## 回顾
+- 新增 `/api/psd-rebuild/library`、`/api/psd-rebuild/library/:jobId`、`/api/psd-rebuild/library/:jobId/export-psd`。
+- 图层库扫描真实本机目录 `~/.codex/ps-automation/psd-rebuild`，合并 runtime state，返回 manifest、JSX、`rebuilt.psd`、`preview.png` 的真实存在状态和大小。
+- UI 在“智能拆层 / PSD 重建”下新增“拆解图层库”：
+  - 展示历史 job、源图缩略图、状态、模型、图层数量。
+  - 支持查看详情、载入当前拆层结果、执行本机 Photoshop 生成 PSD。
+  - 详情显示 manifest 图层摘要、兼容输入、PSD local_only 边界和本地产物路径。
+- 真实验证：
+  - 服务已重启到 `http://127.0.0.1:3498`，PID `28795`。
+  - `/api/psd-rebuild/library?limit=10` 返回真实本机 job：`count=7`。
+  - `/api/psd-rebuild/library/3c92d4b3-62e2-493d-9a04-3794857d089f` 返回 `ai_analyzed` manifest、`layerCount=1`、低分辨率兼容输入 `64x64 -> 256x256`。
+  - 首次真实导出暴露 Photoshop 2026 对 JSX 文件 alias 和 133B 小 PNG 打开兼容问题；已修正为读取 JSX 文本执行，并在重建脚本中使用 provider 兼容副本打开后缩放回原始画布尺寸。
+  - 真实调用导出 API 成功：
+    - job id：`3c92d4b3-62e2-493d-9a04-3794857d089f`
+    - status：`psd_exported`
+    - `rebuilt.psd`：`/Users/a1234/.codex/ps-automation/psd-rebuild/3c92d4b3-62e2-493d-9a04-3794857d089f/rebuilt.psd`，约 `67 KB`
+    - `preview.png`：`/Users/a1234/.codex/ps-automation/psd-rebuild/3c92d4b3-62e2-493d-9a04-3794857d089f/preview.png`，约 `14 KB`
+    - `photoshop.result.ok=true`，`localOnly=true`
+  - `/api/status` 返回 `psdRebuildLibrary.count=7`，首项状态 `psd_exported`，响应未包含敏感 token/key 片段。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果。
+
 # 2026-04-28 任务 — 修正 vision provider 图片输入兼容格式
 
 ## 目标

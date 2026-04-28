@@ -13,6 +13,8 @@ import {
   addModelUsageRecord,
   addPsdRebuildJob,
   getImageUpload,
+  getPsdRebuildJob,
+  listPsdRebuildJobs,
   type ImageUploadRecord,
   type PsdRebuildJobRecord,
 } from './state.js';
@@ -56,6 +58,31 @@ type RebuildLayer = {
   };
   editableRecommendation: string;
   notes?: string | null;
+};
+
+type LocalFileStatus = {
+  path: string;
+  exists: boolean;
+  sizeBytes: number | null;
+  updatedAt: string | null;
+};
+
+type PsdRebuildLibraryItem = PsdRebuildJobRecord & {
+  generatedAt?: string | null;
+  summary?: string | null;
+  manifestStatus?: string | null;
+  directoryPath: string;
+  manifestFile: LocalFileStatus;
+  photoshopScriptFile: LocalFileStatus;
+  outputPsdFile: LocalFileStatus;
+  previewImageFile: LocalFileStatus;
+  visionInput?: unknown;
+  layerPolicy?: unknown;
+};
+
+type PsdRebuildLibraryDetail = {
+  job: PsdRebuildLibraryItem;
+  layerManifest: Record<string, unknown> | null;
 };
 
 function safeError(error: unknown): string {
@@ -124,6 +151,12 @@ function rebuildDir(jobId: string): string {
   const dir = runtimePath('psd-rebuild', jobId);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function rebuildRoot(): string {
+  const root = runtimePath('psd-rebuild');
+  fs.mkdirSync(root, { recursive: true });
+  return root;
 }
 
 function stripJsonFences(value: string): string {
@@ -287,6 +320,7 @@ function jsxString(value: string): string {
 
 function writePhotoshopScript(input: {
   source: SourceImage;
+  sourceOpenPath?: string | null;
   layers: RebuildLayer[];
   outputPsdPath: string;
   previewImagePath: string;
@@ -294,19 +328,42 @@ function writePhotoshopScript(input: {
   scriptPath: string;
 }): void {
   const textLayers = input.layers.filter((layer) => layer.type === 'text' && String(layer.text || '').trim());
+  const sourceOpenPath = input.sourceOpenPath && fs.existsSync(input.sourceOpenPath)
+    ? input.sourceOpenPath
+    : input.source.path;
   const script = `#target photoshop
 app.displayDialogs = DialogModes.NO;
-var sourceFile = File(${jsxString(input.source.path)});
+var sourceFile = File(${jsxString(sourceOpenPath)});
+var originalSourceFile = File(${jsxString(input.source.path)});
 var outputFile = File(${jsxString(input.outputPsdPath)});
 var previewFile = File(${jsxString(input.previewImagePath)});
 var manifestFile = File(${jsxString(input.manifestPath)});
+var sourceWidth = ${Math.max(1, Math.round(input.source.width))};
+var sourceHeight = ${Math.max(1, Math.round(input.source.height))};
 if (!sourceFile.exists) {
   throw new Error("Source image missing: " + sourceFile.fsName);
 }
-var doc = app.open(sourceFile);
+var sourceDoc = app.open(sourceFile);
+var doc = app.documents.add(sourceWidth, sourceHeight, 72, "AI PSD rebuild", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
+app.activeDocument = sourceDoc;
+sourceDoc.activeLayer.duplicate(doc, ElementPlacement.PLACEATBEGINNING);
+sourceDoc.close(SaveOptions.DONOTSAVECHANGES);
+app.activeDocument = doc;
 try {
   doc.activeLayer.name = "Original flattened image";
 } catch (renameError) {}
+try {
+  var rasterBounds = doc.activeLayer.bounds;
+  var rasterLeft = rasterBounds[0].as("px");
+  var rasterTop = rasterBounds[1].as("px");
+  var rasterWidth = rasterBounds[2].as("px") - rasterLeft;
+  var rasterHeight = rasterBounds[3].as("px") - rasterTop;
+  if (rasterWidth > 0 && rasterHeight > 0) {
+    doc.activeLayer.resize((sourceWidth / rasterWidth) * 100, (sourceHeight / rasterHeight) * 100, AnchorPosition.TOPLEFT);
+    var resizedBounds = doc.activeLayer.bounds;
+    doc.activeLayer.translate(-resizedBounds[0].as("px"), -resizedBounds[1].as("px"));
+  }
+} catch (fitError) {}
 var layerSet = doc.layerSets.add();
 layerSet.name = "AI rebuilt editable layers";
 var textLayers = ${JSON.stringify(textLayers.map((layer) => ({
@@ -358,10 +415,11 @@ async function runPhotoshopScript(scriptPath: string): Promise<{ ok: boolean; co
   }
   const appName = path.basename(String(config.appPath || 'Adobe Photoshop 2026'), '.app');
   const appleScript = [
-    `set jsFile to POSIX file ${JSON.stringify(scriptPath)}`,
+    `set jsFile to POSIX file ${JSON.stringify(scriptPath)} as alias`,
+    'set jsSource to read jsFile',
     `tell application ${JSON.stringify(appName)}`,
     'activate',
-    'do javascript jsFile',
+    'do javascript jsSource',
     'end tell',
   ].join('\n');
   const result = spawnSync('osascript', ['-e', appleScript], {
@@ -373,6 +431,288 @@ async function runPhotoshopScript(scriptPath: string): Promise<{ ok: boolean; co
   return result.status === 0
     ? { ok: true, command: `osascript ${path.basename(scriptPath)}` }
     : { ok: false, command: `osascript ${path.basename(scriptPath)}`, error: stderr || stdout || `exit=${result.status}` };
+}
+
+function localFileStatus(filePath: string): LocalFileStatus {
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return { path: filePath, exists: false, sizeBytes: null, updatedAt: null };
+  }
+  const stat = fs.statSync(filePath);
+  return {
+    path: filePath,
+    exists: true,
+    sizeBytes: stat.size,
+    updatedAt: stat.mtime.toISOString(),
+  };
+}
+
+function safeReadManifest(manifestPath: string): Record<string, unknown> | null {
+  if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) return null;
+  try {
+    return maybeRecord(JSON.parse(fs.readFileSync(manifestPath, 'utf8')));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLibraryJobId(jobId: string): string {
+  const normalized = String(jobId || '').trim();
+  if (!normalized || !/^[A-Za-z0-9._-]+$/.test(normalized)) {
+    throw badRequest('PSD 重建 jobId 无效。');
+  }
+  return normalized;
+}
+
+function directoryUpdatedAt(dir: string): string | null {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+  return fs.statSync(dir).mtime.toISOString();
+}
+
+function manifestSourceImage(manifest: Record<string, unknown> | null): Record<string, any> {
+  return maybeRecord(manifest?.sourceImage) || {};
+}
+
+function manifestLayers(manifest: Record<string, unknown> | null): RebuildLayer[] {
+  const layers = Array.isArray(manifest?.layers) ? manifest.layers : [];
+  return layers.filter((layer): layer is RebuildLayer => Boolean(maybeRecord(layer)));
+}
+
+function sourceFromLibraryItem(item: PsdRebuildLibraryItem): SourceImage {
+  return {
+    uploadId: item.uploadId || null,
+    path: item.sourceImagePath,
+    width: item.sourceImage.width,
+    height: item.sourceImage.height,
+    mime: item.sourceImage.mime,
+    sizeBytes: item.sourceImage.sizeBytes,
+    sha256: item.sourceImage.sha256 || null,
+  };
+}
+
+function photoshopOpenPathFromManifest(manifest: Record<string, unknown> | null, fallbackPath: string): string {
+  const visionInput = maybeRecord(manifest?.visionInput);
+  const requestImagePath = String(visionInput?.requestImagePath || '').trim();
+  return requestImagePath && fs.existsSync(requestImagePath) && fs.statSync(requestImagePath).isFile()
+    ? requestImagePath
+    : fallbackPath;
+}
+
+function statusFromLibraryFiles(
+  manifest: Record<string, unknown> | null,
+  outputPsdFile: LocalFileStatus,
+): PsdRebuildJobRecord['status'] {
+  if (outputPsdFile.exists) return 'psd_exported';
+  const manifestStatus = String(manifest?.status || '').trim();
+  if (manifestStatus === 'ai_analyzed') return 'analyzed';
+  if (manifestStatus === 'single_raster_fallback') return 'fallback';
+  return manifest ? 'fallback' : 'failed';
+}
+
+function librarySortTime(item: PsdRebuildLibraryItem): number {
+  return Date.parse(item.updatedAt || item.generatedAt || item.createdAt || '') || 0;
+}
+
+function buildLibraryItem(jobId: string, existing: PsdRebuildJobRecord | null = null): PsdRebuildLibraryDetail | null {
+  const normalizedJobId = normalizeLibraryJobId(jobId);
+  const dir = path.join(rebuildRoot(), normalizedJobId);
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+
+  const layerManifestPath = existing?.layerManifestPath || path.join(dir, 'layer-manifest.json');
+  const photoshopScriptPath = existing?.photoshopScriptPath || path.join(dir, 'rebuild.jsx');
+  const outputPsdPath = existing?.outputPsdPath || path.join(dir, 'rebuilt.psd');
+  const previewImagePath = existing?.previewImagePath || path.join(dir, 'preview.png');
+  const layerManifest = safeReadManifest(layerManifestPath);
+  const sourceImage = manifestSourceImage(layerManifest);
+  const layers = manifestLayers(layerManifest);
+  const textLayerCount = layers.filter((layer) => layer.type === 'text' && String(layer.text || '').trim()).length;
+  const outputPsdFile = localFileStatus(outputPsdPath);
+  const previewImageFile = localFileStatus(previewImagePath);
+  const manifestFile = localFileStatus(layerManifestPath);
+  const photoshopScriptFile = localFileStatus(photoshopScriptPath);
+  const generatedAt = layerManifest?.generatedAt ? String(layerManifest.generatedAt) : null;
+  const updatedAt = outputPsdFile.updatedAt || previewImageFile.updatedAt || manifestFile.updatedAt || directoryUpdatedAt(dir) || existing?.updatedAt || generatedAt || new Date().toISOString();
+  const sourcePath = String(sourceImage.path || existing?.sourceImagePath || '').trim();
+  const findings = existing?.findings?.length ? existing.findings : [{
+    code: 'local_layer_library',
+    severity: 'info',
+    message: '从本机 PSD 重建目录读取的真实拆层作业。',
+  }];
+
+  const item: PsdRebuildLibraryItem = {
+    id: normalizedJobId,
+    createdAt: existing?.createdAt || generatedAt || updatedAt,
+    updatedAt,
+    status: statusFromLibraryFiles(layerManifest, outputPsdFile),
+    uploadId: sourceImage.uploadId ? String(sourceImage.uploadId) : existing?.uploadId || null,
+    sourceImagePath: sourcePath,
+    sourceImage: {
+      width: finiteNumber(sourceImage.width ?? existing?.sourceImage.width, 0),
+      height: finiteNumber(sourceImage.height ?? existing?.sourceImage.height, 0),
+      mime: String(sourceImage.mime || existing?.sourceImage.mime || ''),
+      sizeBytes: finiteNumber(sourceImage.sizeBytes ?? existing?.sourceImage.sizeBytes, 0),
+      sha256: sourceImage.sha256 ? String(sourceImage.sha256) : existing?.sourceImage.sha256 || null,
+    },
+    layerManifestPath,
+    photoshopScriptPath,
+    outputPsdPath,
+    outputPsdExists: outputPsdFile.exists,
+    previewImagePath: previewImageFile.exists ? previewImagePath : null,
+    layerCount: layers.length || existing?.layerCount || 0,
+    textLayerCount: textLayerCount || existing?.textLayerCount || 0,
+    model: layerManifest?.model ? String(layerManifest.model) : existing?.model || null,
+    selectedRole: layerManifest?.selectedRole ? String(layerManifest.selectedRole) : existing?.selectedRole || null,
+    apiKeyEnv: existing?.apiKeyEnv || null,
+    durationMs: existing?.durationMs ?? null,
+    fallback: maybeRecord(layerManifest?.fallbackReason)
+      ? existing?.fallback || null
+      : layerManifest?.fallbackReason
+        ? { mode: 'single_raster_manifest', reason: String(layerManifest.fallbackReason), nonBlocking: true }
+        : existing?.fallback || null,
+    findings,
+    psdDelivery: 'local_only',
+    generatedAt,
+    summary: layerManifest?.summary ? String(layerManifest.summary) : null,
+    manifestStatus: layerManifest?.status ? String(layerManifest.status) : null,
+    directoryPath: dir,
+    manifestFile,
+    photoshopScriptFile,
+    outputPsdFile,
+    previewImageFile,
+    visionInput: layerManifest?.visionInput || null,
+    layerPolicy: layerManifest?.layerPolicy || null,
+  };
+
+  return { job: item, layerManifest };
+}
+
+function stateRecordFromLibraryItem(
+  item: PsdRebuildLibraryItem,
+  findings: PsdRebuildJobRecord['findings'] = item.findings,
+): Omit<PsdRebuildJobRecord, 'id' | 'createdAt' | 'updatedAt' | 'psdDelivery'> & {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  return {
+    id: item.id,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    status: item.status,
+    uploadId: item.uploadId || null,
+    sourceImagePath: item.sourceImagePath,
+    sourceImage: item.sourceImage,
+    layerManifestPath: item.layerManifestPath,
+    photoshopScriptPath: item.photoshopScriptPath || null,
+    outputPsdPath: item.outputPsdPath || null,
+    outputPsdExists: Boolean(item.outputPsdExists),
+    previewImagePath: item.previewImagePath || null,
+    layerCount: item.layerCount,
+    textLayerCount: item.textLayerCount,
+    model: item.model || null,
+    selectedRole: item.selectedRole || null,
+    apiKeyEnv: item.apiKeyEnv || null,
+    durationMs: item.durationMs ?? null,
+    fallback: item.fallback || null,
+    findings,
+  };
+}
+
+export function listPsdRebuildLibrary(input: { limit?: number } = {}): Record<string, unknown> {
+  const root = rebuildRoot();
+  const existingById = new Map(listPsdRebuildJobs().map((job) => [job.id, job]));
+  const ids = new Set<string>();
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory() && /^[A-Za-z0-9._-]+$/.test(entry.name)) ids.add(entry.name);
+  }
+  for (const job of existingById.values()) {
+    if (job.id && /^[A-Za-z0-9._-]+$/.test(job.id)) ids.add(job.id);
+  }
+  const items = Array.from(ids)
+    .map((id) => buildLibraryItem(id, existingById.get(id) || null)?.job || null)
+    .filter((item): item is PsdRebuildLibraryItem => Boolean(item))
+    .sort((a, b) => librarySortTime(b) - librarySortTime(a));
+  const limit = Math.max(1, Math.min(100, Math.trunc(Number(input.limit || 50))));
+  return {
+    ok: true,
+    root,
+    count: items.length,
+    items: items.slice(0, limit),
+  };
+}
+
+export function getPsdRebuildLibraryJob(jobId: string): PsdRebuildLibraryDetail {
+  const normalizedJobId = normalizeLibraryJobId(jobId);
+  const detail = buildLibraryItem(normalizedJobId, getPsdRebuildJob(normalizedJobId));
+  if (!detail) throw badRequest('本机拆解图层库中没有这个 PSD 重建 job。');
+  return detail;
+}
+
+export async function exportPsdRebuildLibraryJob(jobId: string): Promise<Record<string, unknown>> {
+  const before = getPsdRebuildLibraryJob(jobId);
+  if (!before.job.photoshopScriptFile.exists || !before.job.photoshopScriptPath) {
+    throw badRequest('这个 PSD 重建 job 缺少 rebuild.jsx，无法执行 Photoshop 导出。');
+  }
+  writePhotoshopScript({
+    source: sourceFromLibraryItem(before.job),
+    sourceOpenPath: photoshopOpenPathFromManifest(before.layerManifest, before.job.sourceImagePath),
+    layers: manifestLayers(before.layerManifest),
+    outputPsdPath: before.job.outputPsdPath || path.join(before.job.directoryPath, 'rebuilt.psd'),
+    previewImagePath: before.job.previewImageFile.path || path.join(before.job.directoryPath, 'preview.png'),
+    manifestPath: before.job.layerManifestPath,
+    scriptPath: before.job.photoshopScriptPath,
+  });
+  const photoshopResult = await runPhotoshopScript(before.job.photoshopScriptPath);
+  const after = getPsdRebuildLibraryJob(jobId);
+  const outputExists = Boolean(after.job.outputPsdFile.exists);
+  const baseFindings = after.job.findings.filter((finding) => !new Set([
+    'photoshop_rebuild_not_exported',
+    'photoshop_rebuild_exported',
+    'photoshop_execution_skipped',
+  ]).has(String(finding.code || '')));
+  const findings = [
+    ...baseFindings,
+    photoshopResult.ok && outputExists
+      ? {
+          code: 'photoshop_rebuild_exported',
+          severity: 'info',
+          message: '已执行本机 Photoshop JSX，并生成本地 rebuilt.psd。',
+        }
+      : {
+          code: 'photoshop_rebuild_not_exported',
+          severity: 'warning',
+          message: photoshopResult.error || 'Photoshop 执行完成但未发现 rebuilt.psd；请检查 Photoshop 日志或手动运行 JSX。',
+        },
+  ];
+  const record = addPsdRebuildJob(stateRecordFromLibraryItem(after.job, findings));
+  const updated = getPsdRebuildLibraryJob(jobId);
+  return {
+    ok: true,
+    job: {
+      ...updated.job,
+      ...record,
+      manifestFile: updated.job.manifestFile,
+      photoshopScriptFile: updated.job.photoshopScriptFile,
+      outputPsdFile: updated.job.outputPsdFile,
+      previewImageFile: updated.job.previewImageFile,
+      directoryPath: updated.job.directoryPath,
+      summary: updated.job.summary,
+      manifestStatus: updated.job.manifestStatus,
+      generatedAt: updated.job.generatedAt,
+      visionInput: updated.job.visionInput,
+      layerPolicy: updated.job.layerPolicy,
+      findings,
+    },
+    layerManifest: updated.layerManifest,
+    photoshop: {
+      executed: true,
+      result: photoshopResult,
+      outputPsdExists: outputExists,
+      outputPsdPath: after.job.outputPsdPath,
+      previewImagePath: after.job.previewImagePath,
+      localOnly: true,
+    },
+    library: listPsdRebuildLibrary(),
+  };
 }
 
 function safeAddLayerAnalysisUsage(input: {
@@ -493,6 +833,7 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
   fs.writeFileSync(layerManifestPath, JSON.stringify(manifest, null, 2));
   writePhotoshopScript({
     source,
+    sourceOpenPath: analysisRequestImagePath,
     layers,
     outputPsdPath,
     previewImagePath,
