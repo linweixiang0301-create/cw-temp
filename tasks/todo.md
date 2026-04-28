@@ -53,6 +53,18 @@
   - `/api/models/vision/qa` 返回 `fallback.manual_review`
   - `nonBlocking=true`
   - `/api/regression/model-routing` 返回 `ready`
+- 远端 fresh clone 冷启动回归：
+  - fresh clone HEAD：`543c306281687b61c0262d34b3d6d6137c98a30b`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 仓库密钥扫描无 `sk-...` 明文
+  - 无 `.env.local`、空 provider/env、备用端口 `3613`：
+    - `/api/status` 正常
+    - image ready 为 `false`
+    - vision ready 为 `false`
+    - `/api/regression/model-routing` 返回 `ready`
+    - `/api/feishu/send-history` 返回空历史
 - 验证通过：
   - `npm run check`
   - `node --check public/app.js`
