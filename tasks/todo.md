@@ -1,3 +1,36 @@
+# 2026-04-28 任务 — image / vision 备选模型实测筛选
+
+## 目标
+- 使用真实 provider 分别测试 image 与 vision 候选模型。
+- 每类只保留 1 个优选模型和 1 个备选模型。
+- 所有测试必须使用真实接口、真实产物和真实 `final.png`，不使用 mock 数据。
+- 筛选后更新本机模型路由；模型失败仍保持非阻断回退，不影响 PS + 飞书主链路。
+
+## 计划
+- [x] 读取当前 image / vision 路由和 provider live probe。
+- [x] 分别调用 image 候选模型，确认实际命中模型、产物路径、文件大小和图片格式。
+- [x] 分别调用 vision 候选模型，使用当前真实 `final.png` 确认实际命中模型、耗时和质检文本。
+- [x] 选择每类 1 个优选 + 1 个备选，并保存到本地模型路由。
+- [x] 运行预检、回归和路由读取验证，并记录回顾。
+
+## 回顾
+- Provider live probe 真实通过：
+  - image：`https://api.tu-zi.com/v1/models`，`modelCount=444`，最终保留模型均 matched。
+  - vision：`https://ai.flashapi.top/v1/models`，`modelCount=3`，最终保留模型均 matched。
+- image 候选实测：
+  - `gemini-3-pro-image-preview-4k`：真实命中，`/v1/images/generations`，输出 JPEG，`4096x4096`，`8,340,523 bytes`，耗时约 `43.6s`。
+  - `gemini-3-pro-image-preview-vip`：真实命中，`/v1/images/generations`，输出 JPEG，`1024x1024`，`646,010 bytes`，耗时约 `28.3s`。
+  - `seedream-4-0-250828`：在当前路由下会回落到 4K；单模型复测时 images/chat 两种端点均 HTTP 400，不纳入保留。
+- vision 候选实测，输入真实 `final.png`：`/Users/a1234/Desktop/飞书Claude/claude-feishu-bridge/.runtime/bridge-state/photoshop-jobs/running/photoshop-be946f18-7e54-497c-9548-483d2ea4c85b/final.png`，大小 `1,852,542 bytes`。
+  - `gemini-3-flash-preview`：真实命中，返回可读质检，耗时约 `12.8s`，适合作为优选。
+  - `gemini-3.1-pro-preview`：真实命中，返回可读质检，耗时约 `35.0s`，适合作为高质量备选。
+  - `gemini-3-pro-preview`：普通路由调用会回落到 flash；单模型复测 HTTP 503，不纳入保留。
+- 已保存最终本机模型路由：
+  - image 优选：`gemini-3-pro-image-preview-4k`；备选：`gemini-3-pro-image-preview-vip`；source：`tuzi-image-screened`。
+  - vision 优选：`gemini-3-flash-preview`；备选：`gemini-3.1-pro-preview`；source：`flashapi-vision-screened`。
+- `/api/model-routes/live-probe` 验证最终路由均为 `ready`，无 findings。
+- `/api/regression/model-routing` 返回 `ready`；模型调用审计记录增加到 `14` 条，其中失败候选均按 fallback/manual 路径记录，未阻断主链路。
+
 # 2026-04-28 任务 — 真实 image / vision provider 配置与生图验证
 
 ## 目标
