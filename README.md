@@ -84,6 +84,7 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `POST /api/model-routes`
 - `POST /api/model-routes/preflight`
 - `POST /api/model-routes/live-probe`
+- `GET /api/model-routes/orchestration`
 - `GET /api/model-routes/usage-history`
 - `POST /api/models/image/generate`
 - `POST /api/models/vision/qa`
@@ -145,6 +146,14 @@ UI 的“模型专用 Key Env”支持每行一个映射：
 ```text
 gpt-5.5=GPT55_FLASH_API_KEY
 ```
+
+`/api/model-routes/orchestration` 会基于当前真实路由和 live probe 生成三路协作分析：
+
+- `instruction`：本地控制面，理解用户目标、组织 slot 操作和 prompt。
+- `image`：产物面，生成真实本机图片文件，失败回退 `manual_file`。
+- `vision`：质检面，检查最终 `final.png`，失败回退 `manual_review` 且不阻断飞书发送。
+
+该分析还会标记模型级 fallback、provider 级故障覆盖、模型专用 Key Env 和主链路非阻断策略。
 
 `/api/models/image/generate` 会先尝试 OpenAI-compatible `/v1/images/generations`。如果真实 provider 的图像模型走 chat 形态，会再尝试 `/v1/chat/completions` 并从返回的 base64 或图片 URL 提取真实图片字节。只有图片魔数校验通过并落盘到 `~/.codex/ps-automation/model-artifacts/image`，才返回 `generated`。
 

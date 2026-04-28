@@ -5,7 +5,7 @@ import { DEFAULT_HOST, DEFAULT_PORT, MANIFEST_DISCOVERY_ROOTS, PUBLIC_DIR, ensur
 import { Design006BrowserManager } from './design006-browser-manager.js';
 import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './feishu-output.js';
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
-import { generateImageArtifact, getResolvedModelRoute, getResolvedModelRoutes, probeModelRoutes, runVisionQualityCheck } from './model-routing.js';
+import { generateImageArtifact, getModelRouteOrchestration, getResolvedModelRoute, getResolvedModelRoutes, probeModelRoutes, runVisionQualityCheck } from './model-routing.js';
 import {
   confirmFinalExport,
   getPhotoshopJobArtifactCenter,
@@ -1246,6 +1246,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         ok: true,
         generatedAt: new Date().toISOString(),
         probes: await probeModelRoutes(),
+      });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/model-routes/orchestration') {
+      sendJson(res, 200, {
+        ok: true,
+        orchestration: await getModelRouteOrchestration(),
       });
       return true;
     }

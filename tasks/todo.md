@@ -1,3 +1,57 @@
+# 2026-04-28 任务 — 模型三路协作关系分析与 UI 优化
+
+## 目标
+- 在模型路由区明确展示三类模型的协作关系：
+  - instruction：本地 Codex 登录态，负责指令理解与工作流控制。
+  - image：真实 provider 生图，负责图片槽位素材生成并落本地文件。
+  - vision：真实 provider 质检，负责最终 PNG 发送前 QA，失败不阻断主链路。
+- 新增系统级健康判断：不只看单路 ready，还判断接力链路、fallback 覆盖、凭据隔离和安全边界。
+- 优化 UI 上模型专用 Key 的展示，避免长 env 名挤在一行看不清。
+- 不改变当前已筛选的真实模型优选：
+  - image：`gpt-image-2` 优选，`gemini-3-pro-image-preview-4k` 备选。
+  - vision：`gemini-3-flash-preview` 优选，`gpt-5.5` 备选。
+
+## 计划
+- [x] 后端新增模型协作分析函数，输出 stages、handoffs、checks、recommendations。
+- [x] 新增 `/api/model-routes/orchestration`，复用真实路由状态与 live probe，不使用 mock。
+- [x] UI 新增“模型协作”面板，展示三路接力、健康检查和优化建议。
+- [x] 优化模型专用 Key Env 的卡片展示。
+- [x] 更新 README / 任务回顾，运行类型检查、前端语法检查、真实 API 验证和密钥扫描。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/model-routes/orchestration`，确认三路 route 和 live probe 都来自当前真实配置。
+- 真实调用 `/api/model-routes/live-probe`，确认 instruction 使用本地 Codex，image/vision 命中真实 provider。
+- 扫描仓库与 API 响应，确认没有写入或返回 token/key 明文。
+
+## 回顾
+- 已新增 `/api/model-routes/orchestration`：
+  - 输出 `stages`：instruction / image / vision 各自角色、输入、输出、fallback 模式、阻断策略和安全边界。
+  - 输出 `handoffs`：指令到生图、生图到 Photoshop、Photoshop 到质检、质检到飞书。
+  - 输出 `checks`：本地控制面、真实生图 ready、真实质检 ready、模型级 fallback、provider 级故障边界、模型专用 Key Env、主链路非阻断策略。
+  - 输出 `recommendations`：当前配置可运行，但 image / vision 的主备仍在各自同一 Base URL 下；这是模型级 fallback，不是 provider 级 fallback，后续如追求更高可用性再补跨 provider 备援。
+- UI：
+  - 模型路由区新增“模型协作”面板，自动展示三路接力关系、健康检查和优化建议。
+  - 本地配置区新增“协作分析”按钮。
+  - 模型专用 Key Env 改为独立小卡展示，避免长环境变量名贴在一行难读。
+- 当前真实协作分析结果：
+  - 总状态：`warning`
+  - 原因：链路可运行，三路均 ready；仅提示 provider 级冗余尚未覆盖。
+  - instruction：`codex-login` / `gpt-5.5` / `local-codex-login` / `ready`
+  - image：`gpt-image-2` -> `gemini-3-pro-image-preview-4k` / `https://api.tu-zi.com/v1` / `ready`
+  - vision：`gemini-3-flash-preview` -> `gpt-5.5` / `https://ai.flashapi.top` / `ready`
+  - `credential_boundary=ready`，vision 备选 `gpt-5.5` 使用模型专用 Key Env：`GPT55_FLASH_API_KEY`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/model-routes/orchestration`
+  - `/api/model-routes/live-probe`
+  - `/api/regression/model-routing`
+  - API 响应未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-` 明文。
+
 # 2026-04-28 任务 — 指令解析模型接入本地 Codex 登录态
 
 ## 目标

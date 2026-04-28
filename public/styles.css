@@ -345,6 +345,36 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.model-key-envs {
+  display: grid;
+  gap: 5px;
+}
+
+.model-key-env {
+  background: #ffffff;
+  border: 1px solid #e8edf5;
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+}
+
+.model-key-env strong,
+.model-key-env span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.model-key-env strong {
+  color: #344054;
+}
+
+.model-key-env span {
+  color: #101828;
+}
+
 .muted-field {
   opacity: 0.62;
 }
@@ -382,6 +412,117 @@ button:disabled {
   color: #101828;
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.model-orchestration {
+  background: #ffffff;
+  border: 1px solid #e8edf5;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.model-orchestration.ready {
+  border-left: 3px solid var(--green);
+}
+
+.model-orchestration.warning,
+.model-orchestration.pending {
+  border-left: 3px solid var(--amber);
+}
+
+.model-orchestration.blocked {
+  border-left: 3px solid var(--red);
+}
+
+.model-orchestration-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.model-orchestration-head strong,
+.model-orchestration-head span,
+.model-orchestration small {
+  overflow-wrap: anywhere;
+}
+
+.model-orchestration-head span {
+  color: #344054;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.model-stage-list,
+.model-handoff-list,
+.model-check-list,
+.model-recommendations {
+  display: grid;
+  gap: 6px;
+}
+
+.model-stage,
+.model-handoff,
+.model-check,
+.model-recommendation {
+  background: var(--soft);
+  border: 1px solid #e8edf5;
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+}
+
+.model-stage.ready,
+.model-handoff.ready,
+.model-check.ready {
+  border-left: 3px solid var(--green);
+}
+
+.model-stage.warning,
+.model-handoff.warning,
+.model-check.warning {
+  border-left: 3px solid var(--amber);
+}
+
+.model-stage.blocked,
+.model-handoff.blocked,
+.model-check.blocked {
+  border-left: 3px solid var(--red);
+}
+
+.model-stage strong,
+.model-handoff strong,
+.model-check b,
+.model-recommendation b {
+  color: #344054;
+  font-size: 11px;
+}
+
+.model-stage span,
+.model-check span,
+.model-recommendation span {
+  color: #101828;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.model-stage span {
+  font-family: var(--mono);
+}
+
+.model-recommendation.high {
+  border-left: 3px solid var(--red);
+}
+
+.model-recommendation.medium {
+  border-left: 3px solid var(--amber);
+}
+
+.model-recommendation.low {
+  border-left: 3px solid var(--green);
 }
 
 .model-route-results {

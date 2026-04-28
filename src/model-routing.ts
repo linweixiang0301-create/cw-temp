@@ -103,6 +103,48 @@ export type ModelRouteProbeResult = {
   error?: string | null;
 };
 
+export type ModelRouteOrchestration = {
+  generatedAt: string;
+  status: 'ready' | 'warning' | 'blocked';
+  summary: string;
+  stages: Array<{
+    key: ModelRouteKey;
+    label: string;
+    role: string;
+    status: 'ready' | 'warning' | 'blocked';
+    provider: string | null;
+    primary: string | null;
+    fallback: string | null;
+    sourceKind: ResolvedModelRoute['sourceKind'];
+    modelCount: number;
+    boundary: string;
+    fallbackMode: string;
+    blockingPolicy: string;
+    input: string;
+    output: string;
+    findings: ResolvedModelRoute['findings'];
+  }>;
+  handoffs: Array<{
+    from: ModelRouteKey | 'photoshop';
+    to: ModelRouteKey | 'photoshop' | 'feishu';
+    status: 'ready' | 'warning' | 'blocked';
+    label: string;
+    message: string;
+  }>;
+  checks: Array<{
+    code: string;
+    status: 'ready' | 'warning' | 'blocked';
+    message: string;
+  }>;
+  recommendations: Array<{
+    code: string;
+    priority: 'high' | 'medium' | 'low';
+    message: string;
+  }>;
+  routes: ResolvedModelRoute[];
+  probes: ModelRouteProbeResult[];
+};
+
 const ROUTES: RouteMeta[] = [
   { key: 'instruction', label: '指令解析模型', envPrefix: 'PS_AUTOMATION_INSTRUCTION' },
   { key: 'image', label: '生图 / 图生图模型', envPrefix: 'PS_AUTOMATION_IMAGE' },
@@ -651,6 +693,212 @@ async function probeOneRoute(route: ResolvedModelRoute): Promise<ModelRouteProbe
 
 export async function probeModelRoutes(): Promise<ModelRouteProbeResult[]> {
   return Promise.all(getResolvedModelRoutes().map((route) => probeOneRoute(route)));
+}
+
+function routeByKey(routes: ResolvedModelRoute[], key: ModelRouteKey): ResolvedModelRoute {
+  return routes.find((route) => route.key === key) || getResolvedModelRoute(key);
+}
+
+function probeByKey(probes: ModelRouteProbeResult[], key: ModelRouteKey): ModelRouteProbeResult | null {
+  return probes.find((probe) => probe.key === key) || null;
+}
+
+function orchestrationStatus(route: ResolvedModelRoute, probe: ModelRouteProbeResult | null): 'ready' | 'warning' | 'blocked' {
+  if (!route.ready || probe?.status === 'blocked') return 'blocked';
+  if (!route.configured || probe?.status === 'skipped') return 'warning';
+  return 'ready';
+}
+
+function routeBoundary(route: ResolvedModelRoute): string {
+  if (route.provider === 'codex-login') return '本地 Codex 登录态；只读非敏感状态，不保存 token。';
+  if (route.baseUrl) return `真实 provider：${route.baseUrl}`;
+  return '未配置真实 provider。';
+}
+
+function routeFallbackMode(route: ResolvedModelRoute): string {
+  if (!route.fallback) return route.key === 'instruction' ? '本地 Codex 单模型控制面。' : '未配置备选模型。';
+  if (route.key === 'image') return '模型级 fallback：主模型性价比优先，备选用于高质量/主模型失败。';
+  if (route.key === 'vision') return '模型级 fallback：主模型快速质检，备选用于主模型失败。';
+  return '模型级 fallback。';
+}
+
+function stageForRoute(route: ResolvedModelRoute, probe: ModelRouteProbeResult | null): ModelRouteOrchestration['stages'][number] {
+  const stageText: Record<ModelRouteKey, Pick<ModelRouteOrchestration['stages'][number], 'role' | 'input' | 'output' | 'blockingPolicy'>> = {
+    instruction: {
+      role: '控制面：理解用户目标，组织 slot 操作、提示词和流程决策。',
+      input: '用户指令、模板 manifest、slot 上下文。',
+      output: 'UI 动作草案、image prompt、手动确认路径。',
+      blockingPolicy: '未就绪只影响 AI 指令解析；手动 slot 操作仍可继续。',
+    },
+    image: {
+      role: '产物面：为图片槽位生成真实图片文件。',
+      input: 'instruction 生成或人工填写的 prompt、目标 slot。',
+      output: '本机 model-artifacts/image 图片文件，供 Photoshop 替换。',
+      blockingPolicy: '失败回退 manual_file，不生成假图，不阻断手动上传素材。',
+    },
+    vision: {
+      role: '质检面：检查 Photoshop 导出的最终 PNG。',
+      input: 'Photoshop job 导出的 final.png。',
+      output: 'QA 摘要、审计记录、发送前质量提示。',
+      blockingPolicy: '失败回退 manual_review，不阻断 final.png 飞书投递。',
+    },
+  };
+  return {
+    key: route.key,
+    label: route.label,
+    status: orchestrationStatus(route, probe),
+    provider: route.provider,
+    primary: route.primary,
+    fallback: route.fallback,
+    sourceKind: route.sourceKind,
+    modelCount: route.models.length,
+    boundary: routeBoundary(route),
+    fallbackMode: routeFallbackMode(route),
+    findings: route.findings,
+    ...stageText[route.key],
+  };
+}
+
+function handoffStatus(routes: ResolvedModelRoute[], required: ModelRouteKey[], soft = false): 'ready' | 'warning' | 'blocked' {
+  const missing = required.filter((key) => !routeByKey(routes, key).ready);
+  if (missing.length === 0) return 'ready';
+  return soft ? 'warning' : 'blocked';
+}
+
+function sameProviderModelFallback(route: ResolvedModelRoute): boolean {
+  return Boolean(route.fallback && route.provider === 'openai-compatible' && route.baseUrl);
+}
+
+export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestration> {
+  const generatedAt = new Date().toISOString();
+  const routes = getResolvedModelRoutes();
+  const probes = await probeModelRoutes();
+  const instruction = routeByKey(routes, 'instruction');
+  const image = routeByKey(routes, 'image');
+  const vision = routeByKey(routes, 'vision');
+  const stages = routes.map((route) => stageForRoute(route, probeByKey(probes, route.key)));
+  const providerLevelFallbackWarnings = [image, vision].filter(sameProviderModelFallback);
+  const checks: ModelRouteOrchestration['checks'] = [
+    {
+      code: 'control_plane_local',
+      status: instruction.provider === 'codex-login' && instruction.ready ? 'ready' : 'warning',
+      message: instruction.provider === 'codex-login'
+        ? '指令解析走本地 Codex 登录态，密钥不进入控制台。'
+        : '指令解析未使用本地 Codex 登录态，需确认远程 provider 凭据边界。',
+    },
+    {
+      code: 'image_generation_ready',
+      status: image.ready && probeByKey(probes, 'image')?.status === 'ready' ? 'ready' : 'blocked',
+      message: image.ready
+        ? `生图主模型 ${image.primary || '-'} 可用，备选 ${image.fallback || '未配置'}。`
+        : '生图路由未就绪，AI 图片槽位会回退到 manual_file。',
+    },
+    {
+      code: 'vision_quality_ready',
+      status: vision.ready && probeByKey(probes, 'vision')?.status === 'ready' ? 'ready' : 'warning',
+      message: vision.ready
+        ? `质检主模型 ${vision.primary || '-'} 可用，备选 ${vision.fallback || '未配置'}。`
+        : '质检路由未就绪，发送前 QA 会回退到 manual_review。',
+    },
+    {
+      code: 'fallback_model_coverage',
+      status: image.fallback && vision.fallback ? 'ready' : 'warning',
+      message: image.fallback && vision.fallback
+        ? 'image 与 vision 都有模型级 fallback。'
+        : '至少一路缺少模型级 fallback。',
+    },
+    {
+      code: 'provider_failure_boundary',
+      status: providerLevelFallbackWarnings.length ? 'warning' : 'ready',
+      message: providerLevelFallbackWarnings.length
+        ? `${providerLevelFallbackWarnings.map((route) => route.key).join(' / ')} 的主备仍在同一 Base URL 下；已覆盖模型失败，未覆盖 provider 整体故障。`
+        : '主备模型跨 provider 或本地边界，provider 故障覆盖更完整。',
+    },
+    {
+      code: 'credential_boundary',
+      status: vision.fallback && vision.modelApiKeyEnvs[vision.fallback] ? 'ready' : 'warning',
+      message: vision.fallback && vision.modelApiKeyEnvs[vision.fallback]
+        ? `vision 备选 ${vision.fallback} 使用独立环境变量 ${vision.modelApiKeyEnvs[vision.fallback]}。`
+        : 'vision 备选模型未配置模型专用 Key Env；如果 provider 权限不同，fallback 可能失败。',
+    },
+    {
+      code: 'main_chain_non_blocking',
+      status: 'ready',
+      message: 'image 失败回退 manual_file，vision 失败回退 manual_review，不阻断 Photoshop + 飞书主链路。',
+    },
+  ];
+  const handoffs: ModelRouteOrchestration['handoffs'] = [
+    {
+      from: 'instruction',
+      to: 'image',
+      status: handoffStatus(routes, ['instruction', 'image'], true),
+      label: '指令到生图',
+      message: 'instruction 负责把用户意图整理为 slot 选择和 prompt；image 只负责生成真实本地素材。',
+    },
+    {
+      from: 'image',
+      to: 'photoshop',
+      status: handoffStatus(routes, ['image'], true),
+      label: '生图到 Photoshop',
+      message: 'image 成功后落盘到本机文件，再作为 image.replace.ai / local 动作进入 Photoshop job。',
+    },
+    {
+      from: 'photoshop',
+      to: 'vision',
+      status: handoffStatus(routes, ['vision'], true),
+      label: 'Photoshop 到质检',
+      message: 'Photoshop 导出 final.png 后，vision 做发送前 QA；失败只记录人工复核。',
+    },
+    {
+      from: 'vision',
+      to: 'feishu',
+      status: vision.ready ? 'ready' : 'warning',
+      label: '质检到飞书',
+      message: '飞书只发送最终 PNG；vision QA 结果进入回执和审计，不外发 PSD。',
+    },
+  ];
+  const recommendations: ModelRouteOrchestration['recommendations'] = [
+    ...(instruction.provider === 'codex-login' ? [] : [{
+      code: 'prefer_codex_login_instruction',
+      priority: 'high' as const,
+      message: '建议 instruction 使用本地 Codex 登录态，保持控制面无需额外 API Key。',
+    }]),
+    ...(image.primary === 'gpt-image-2' ? [] : [{
+      code: 'prefer_cost_effective_image_primary',
+      priority: 'medium' as const,
+      message: '常规生图建议继续以 gpt-image-2 作为主模型，4K 模型作为质量/失败备选。',
+    }]),
+    ...(providerLevelFallbackWarnings.length ? [{
+      code: 'add_provider_level_fallback_later',
+      priority: 'low' as const,
+      message: '当前主备主要覆盖模型失败；如果后续追求更高可用性，再增加跨 Base URL 的 provider-level fallback。',
+    }] : []),
+    {
+      code: 'keep_main_chain_non_blocking',
+      priority: 'low',
+      message: '保持现有策略：模型失败写审计并回退人工路径，不阻断 PS + 飞书主链路。',
+    },
+  ];
+  const status = checks.some((check) => check.status === 'blocked')
+    ? 'blocked'
+    : checks.some((check) => check.status === 'warning')
+      ? 'warning'
+      : 'ready';
+  return {
+    generatedAt,
+    status,
+    summary: status === 'blocked'
+      ? '模型协作链路存在阻断项，需要先修复路由。'
+      : status === 'warning'
+        ? '模型协作链路可运行，存在 provider 级冗余等可优化项。'
+        : '模型协作链路健康：本地控制、真实生图、非阻断质检。',
+    stages,
+    handoffs,
+    checks,
+    recommendations,
+    routes,
+    probes,
+  };
 }
 
 async function callModels(

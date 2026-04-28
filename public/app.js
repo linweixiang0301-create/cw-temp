@@ -10,6 +10,7 @@ const state = {
   feishuSendHistory: [],
   modelRoutes: [],
   modelUsageHistory: [],
+  modelOrchestration: null,
   modelRouteConfigKey: 'image',
   lastModelPreflight: null,
   lastModelProbe: null,
@@ -339,11 +340,20 @@ function routeFindingHtml(route) {
   )).join('')}</div>`;
 }
 
-function routeCredentialOverrideText(route) {
+function routeCredentialOverrideHtml(route) {
   const overrides = route?.modelApiKeyEnvs && typeof route.modelApiKeyEnvs === 'object' ? route.modelApiKeyEnvs : {};
   const pairs = Object.entries(overrides).filter(([, envName]) => String(envName || '').trim());
   if (pairs.length === 0) return '';
-  return `模型专用 Key ${pairs.map(([model, envName]) => `${model}:${envName}`).join(' · ')}`;
+  return `
+    <div class="model-key-envs" aria-label="模型专用 Key Env">
+      ${pairs.map(([model, envName]) => `
+        <div class="model-key-env">
+          <strong>${escapeHtml(model)}</strong>
+          <span>${escapeHtml(envName)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 function isCodexLoginRoute(route) {
@@ -429,6 +439,75 @@ function renderModelRouteSelects() {
   `;
 }
 
+function orchestrationTone(status) {
+  if (status === 'ready') return 'ready';
+  if (status === 'blocked') return 'blocked';
+  return 'warning';
+}
+
+function renderModelOrchestration(orchestration = state.modelOrchestration) {
+  if (!orchestration) {
+    return `
+      <div class="model-orchestration pending">
+        <div class="model-orchestration-head">
+          <strong>模型协作</strong>
+          <span>待分析</span>
+        </div>
+        <small>刷新后显示 instruction / image / vision 的接力关系。</small>
+      </div>
+    `;
+  }
+  const stages = Array.isArray(orchestration.stages) ? orchestration.stages : [];
+  const handoffs = Array.isArray(orchestration.handoffs) ? orchestration.handoffs : [];
+  const checks = Array.isArray(orchestration.checks) ? orchestration.checks : [];
+  const recommendations = Array.isArray(orchestration.recommendations) ? orchestration.recommendations : [];
+  return `
+    <div class="model-orchestration ${orchestrationTone(orchestration.status)}">
+      <div class="model-orchestration-head">
+        <strong>模型协作</strong>
+        <span>${escapeHtml(orchestration.status || '-')}</span>
+      </div>
+      <small>${escapeHtml(orchestration.summary || '')}</small>
+      <div class="model-stage-list">
+        ${stages.map((stage) => `
+          <div class="model-stage ${orchestrationTone(stage.status)}">
+            <strong>${escapeHtml(stage.label || stage.key || '-')}</strong>
+            <span>${escapeHtml(stage.primary || '未配置')}${stage.fallback ? ` -> ${escapeHtml(stage.fallback)}` : ''}</span>
+            <small>${escapeHtml(stage.role || '')}</small>
+            <small>${escapeHtml(stage.fallbackMode || '')}</small>
+          </div>
+        `).join('')}
+      </div>
+      <div class="model-handoff-list">
+        ${handoffs.map((handoff) => `
+          <div class="model-handoff ${orchestrationTone(handoff.status)}">
+            <strong>${escapeHtml(handoff.label || `${handoff.from} -> ${handoff.to}`)}</strong>
+            <small>${escapeHtml(handoff.message || '')}</small>
+          </div>
+        `).join('')}
+      </div>
+      <div class="model-check-list">
+        ${checks.map((check) => `
+          <div class="model-check ${orchestrationTone(check.status)}">
+            <b>${escapeHtml(check.code || '-')}</b>
+            <span>${escapeHtml(check.message || '')}</span>
+          </div>
+        `).join('')}
+      </div>
+      ${recommendations.length ? `
+        <div class="model-recommendations">
+          ${recommendations.map((item) => `
+            <div class="model-recommendation ${escapeHtml(item.priority || 'low')}">
+              <b>${escapeHtml(item.priority || '-')}</b>
+              <span>${escapeHtml(item.message || '')}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
 function renderModelRouteConfigForm() {
   const route = modelRouteConfigRoute();
   const codexRoute = isCodexLoginRoute(route);
@@ -482,6 +561,7 @@ function renderModelRouteConfigForm() {
         <button id="saveModelRouteBtn" type="button" class="secondary">保存路由</button>
         <button id="preflightModelRoutesBtn" type="button" class="secondary">预检模型</button>
         <button id="probeModelRoutesBtn" type="button" class="secondary">连通性检查</button>
+        <button id="analyzeModelOrchestrationBtn" type="button" class="secondary">协作分析</button>
         <button id="modelRoutingRegressionBtn" type="button" class="secondary">模型回归</button>
       </div>
       <div id="modelRouteResults" class="model-route-results"></div>
@@ -515,6 +595,9 @@ function bindModelRouteControls() {
   $('probeModelRoutesBtn')?.addEventListener('click', () => probeModelRoutesLive().catch((error) => {
     setMessage('modelRouteResults', error.payload || error.message);
   }));
+  $('analyzeModelOrchestrationBtn')?.addEventListener('click', () => refreshModelOrchestration({ showResults: true }).catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
   $('modelRoutingRegressionBtn')?.addEventListener('click', () => runModelRoutingRegression().catch((error) => {
     setMessage('modelRouteResults', error.payload || error.message);
   }));
@@ -538,11 +621,12 @@ function renderModelRoutes(models) {
         </div>
         <small>备选 ${escapeHtml(route.fallback || '未选择')} · 来源 ${escapeHtml(route.sourceKind || route.source || '-')}</small>
         <small>${escapeHtml(providerLabel(route.provider))} · ${escapeHtml(isCodexLoginRoute(route) ? '本地登录态' : route.baseUrl || 'Base URL 未设')}</small>
-        ${routeCredentialOverrideText(route) ? `<small>${escapeHtml(routeCredentialOverrideText(route))}</small>` : ''}
+        ${routeCredentialOverrideHtml(route)}
         ${codexAuthHtml(route)}
         ${routeFindingHtml(route)}
       </div>
     `),
+    renderModelOrchestration(),
     renderModelRouteConfigForm(),
   ].join('');
   bindModelRouteControls();
@@ -553,9 +637,20 @@ async function refreshModelRoutes() {
   const payload = await api('/api/model-routes');
   state.modelRoutes = Array.isArray(payload.routes) ? payload.routes : [];
   renderModelRoutes(state.modelRoutes);
+  refreshModelOrchestration().catch(() => {});
   renderSlotDetail();
   renderTemplatePreview();
   return state.modelRoutes;
+}
+
+async function refreshModelOrchestration(options = {}) {
+  const payload = await api('/api/model-routes/orchestration');
+  state.modelOrchestration = payload.orchestration || null;
+  renderModelRoutes(state.modelRoutes);
+  if (options.showResults) {
+    setMessage('modelRouteResults', renderModelOrchestration(state.modelOrchestration), 'html');
+  }
+  return state.modelOrchestration;
 }
 
 async function saveModelRouteConfig() {
