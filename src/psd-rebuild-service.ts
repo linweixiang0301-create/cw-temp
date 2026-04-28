@@ -247,6 +247,8 @@ function buildManifest(input: {
   model?: string | null;
   selectedRole?: string | null;
   fallbackReason?: string | null;
+  analysisRequestImagePath?: string | null;
+  analysisImageCompatibility?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   const textCandidates = Array.isArray(input.analysisJson?.textCandidates) ? input.analysisJson.textCandidates : [];
   const reconstructionPlan = Array.isArray(input.analysisJson?.reconstructionPlan) ? input.analysisJson.reconstructionPlan : [];
@@ -264,6 +266,11 @@ function buildManifest(input: {
     },
     model: input.model || null,
     selectedRole: input.selectedRole || null,
+    visionInput: {
+      originalImagePath: input.source.path,
+      requestImagePath: input.analysisRequestImagePath || input.source.path,
+      compatibility: input.analysisImageCompatibility || null,
+    },
     summary: input.analysisJson?.summary || (input.status === 'ai_analyzed' ? '视觉模型已返回拆层建议。' : '模型不可用或未返回结构化结果，保留真实单图层重建包。'),
     layers: input.layers,
     textCandidates,
@@ -437,6 +444,8 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
   let apiKeyEnv: string | null = null;
   let analysisUsage: Record<string, unknown> | null = null;
   let analysisAttempts: unknown = [];
+  let analysisRequestImagePath: string | null = null;
+  let analysisImageCompatibility: Record<string, unknown> | null = null;
   let fallbackReason: string | null = null;
 
   try {
@@ -453,6 +462,8 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
     apiKeyEnv = analysis.apiKeyEnv ? String(analysis.apiKeyEnv) : null;
     analysisUsage = maybeRecord(analysis.usage);
     analysisAttempts = Array.isArray(analysis.attempts) ? analysis.attempts : [];
+    analysisRequestImagePath = analysis.requestImagePath ? String(analysis.requestImagePath) : null;
+    analysisImageCompatibility = maybeRecord(analysis.imageCompatibility);
     if (!analysisJson) fallbackReason = '视觉模型返回了文本，但不是可解析的严格 JSON，已保留 rawAnalysisText 并使用单图层 fallback。';
   } catch (error) {
     const details = maybeRecord((error as { details?: unknown } | null)?.details) || {};
@@ -476,6 +487,8 @@ export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Prom
     model,
     selectedRole,
     fallbackReason,
+    analysisRequestImagePath,
+    analysisImageCompatibility,
   });
   fs.writeFileSync(layerManifestPath, JSON.stringify(manifest, null, 2));
   writePhotoshopScript({

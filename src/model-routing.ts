@@ -1,8 +1,10 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { runtimePath } from './config.js';
+import { imageInfoFromBuffer } from './image-upload.js';
 import {
   listModelRoutes,
   type ModelRouteKey,
@@ -82,6 +84,24 @@ type VisionLayerAnalysisInput = {
   prompt?: string;
 };
 
+type PreparedVisionImage = {
+  originalPath: string;
+  requestPath: string;
+  mime: string;
+  width: number;
+  height: number;
+  compatibility: {
+    applied: boolean;
+    reason: string | null;
+    tool: string | null;
+    originalWidth: number;
+    originalHeight: number;
+    requestWidth: number;
+    requestHeight: number;
+    requestPath: string;
+  };
+};
+
 type CodexAuthStatus = {
   checkedAt: string;
   status: 'logged_in' | 'not_logged_in' | 'missing' | 'unknown';
@@ -158,6 +178,7 @@ const ROUTES: RouteMeta[] = [
 ];
 
 const DEFAULT_IMAGE_SIZE = '1024x1024';
+const MIN_PROVIDER_VISION_DIMENSION = 256;
 const DEFAULT_VISION_PROMPT = [
   '请质检这张 Photoshop 最终 PNG。',
   '请用中文返回：整体是否可投递、明显文字/图像异常、是否需要人工复核。',
@@ -1182,11 +1203,93 @@ export async function generateImageArtifact(input: ImageGenerationInput): Promis
   };
 }
 
-function fileMime(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.webp') return 'image/webp';
-  return 'image/png';
+function visionCompatDir(): string {
+  const dir = runtimePath('model-artifacts', 'vision', 'compat');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function visionCompatImagePath(imagePath: string, width: number, height: number): string {
+  const stat = fs.statSync(imagePath);
+  const hash = crypto.createHash('sha256')
+    .update(`${imagePath}:${stat.size}:${stat.mtimeMs}:${width}x${height}`)
+    .digest('hex')
+    .slice(0, 16);
+  return path.join(visionCompatDir(), `${path.basename(imagePath, path.extname(imagePath))}-${hash}-${width}x${height}.png`);
+}
+
+function prepareVisionImageForProvider(imagePath: string): PreparedVisionImage {
+  const buffer = fs.readFileSync(imagePath);
+  let info: ReturnType<typeof imageInfoFromBuffer>;
+  try {
+    info = imageInfoFromBuffer(buffer);
+  } catch (error) {
+    throw new ModelRouteError('视觉模型输入必须是真实 PNG / JPG / WEBP 图片。', {
+      imagePath,
+      reason: error instanceof Error ? error.message : String(error),
+    }, 400);
+  }
+
+  const minDimension = Math.min(info.width, info.height);
+  if (minDimension >= MIN_PROVIDER_VISION_DIMENSION) {
+    return {
+      originalPath: imagePath,
+      requestPath: imagePath,
+      mime: info.mime,
+      width: info.width,
+      height: info.height,
+      compatibility: {
+        applied: false,
+        reason: null,
+        tool: null,
+        originalWidth: info.width,
+        originalHeight: info.height,
+        requestWidth: info.width,
+        requestHeight: info.height,
+        requestPath: imagePath,
+      },
+    };
+  }
+
+  const scale = MIN_PROVIDER_VISION_DIMENSION / Math.max(1, minDimension);
+  const targetWidth = Math.max(MIN_PROVIDER_VISION_DIMENSION, Math.round(info.width * scale));
+  const targetHeight = Math.max(MIN_PROVIDER_VISION_DIMENSION, Math.round(info.height * scale));
+  const outputPath = visionCompatImagePath(imagePath, targetWidth, targetHeight);
+
+  if (!fs.existsSync(outputPath)) {
+    const result = spawnSync('sips', ['-s', 'format', 'png', '-z', String(targetHeight), String(targetWidth), imagePath, '--out', outputPath], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+    });
+    if (result.status !== 0 || !fs.existsSync(outputPath)) {
+      throw new ModelRouteError('生成 vision provider 兼容图片失败。', {
+        imagePath,
+        targetWidth,
+        targetHeight,
+        tool: 'sips',
+        stderr: String(result.stderr || '').slice(0, 1000),
+      }, 502);
+    }
+  }
+
+  const outputInfo = imageInfoFromBuffer(fs.readFileSync(outputPath));
+  return {
+    originalPath: imagePath,
+    requestPath: outputPath,
+    mime: outputInfo.mime,
+    width: outputInfo.width,
+    height: outputInfo.height,
+    compatibility: {
+      applied: true,
+      reason: `provider_min_dimension_${MIN_PROVIDER_VISION_DIMENSION}`,
+      tool: 'sips',
+      originalWidth: info.width,
+      originalHeight: info.height,
+      requestWidth: outputInfo.width,
+      requestHeight: outputInfo.height,
+      requestPath: outputPath,
+    },
+  };
 }
 
 function textFromModelResponse(payload: unknown): string {
@@ -1211,7 +1314,8 @@ export async function runVisionQualityCheck(input: VisionQaInput): Promise<Recor
     throw new ModelRouteError('质检图片不存在，无法调用视觉模型。', { imagePath });
   }
   const route = getResolvedModelRoute('vision');
-  const imageBase64 = fs.readFileSync(imagePath).toString('base64');
+  const preparedImage = prepareVisionImageForProvider(imagePath);
+  const imageBase64 = fs.readFileSync(preparedImage.requestPath).toString('base64');
   const prompt = String(input.prompt || '').trim() || DEFAULT_VISION_PROMPT;
   const request = await callModels(route, input.modelId, (model) => ({
     endpoint: endpointFor(route, '/chat/completions'),
@@ -1221,7 +1325,7 @@ export async function runVisionQualityCheck(input: VisionQaInput): Promise<Recor
         role: 'user',
         content: [
           { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:${fileMime(imagePath)};base64,${imageBase64}` } },
+          { type: 'image_url', image_url: { url: `data:${preparedImage.mime};base64,${imageBase64}` } },
         ],
       }],
       temperature: 0.2,
@@ -1244,6 +1348,8 @@ export async function runVisionQualityCheck(input: VisionQaInput): Promise<Recor
       provider: request.route.provider,
       sourceKind: request.route.sourceKind,
       imagePath,
+      requestImagePath: preparedImage.requestPath,
+      imageCompatibility: preparedImage.compatibility,
       summary,
       nonBlocking: true,
     },
@@ -1256,7 +1362,8 @@ export async function runVisionLayerAnalysis(input: VisionLayerAnalysisInput): P
     throw new ModelRouteError('拆层分析图片不存在，无法调用视觉模型。', { imagePath });
   }
   const route = getResolvedModelRoute('vision');
-  const imageBase64 = fs.readFileSync(imagePath).toString('base64');
+  const preparedImage = prepareVisionImageForProvider(imagePath);
+  const imageBase64 = fs.readFileSync(preparedImage.requestPath).toString('base64');
   const prompt = String(input.prompt || '').trim() || DEFAULT_LAYER_ANALYSIS_PROMPT;
   const request = await callModels(route, input.modelId, (model) => ({
     endpoint: endpointFor(route, '/chat/completions'),
@@ -1266,7 +1373,7 @@ export async function runVisionLayerAnalysis(input: VisionLayerAnalysisInput): P
         role: 'user',
         content: [
           { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:${fileMime(imagePath)};base64,${imageBase64}` } },
+          { type: 'image_url', image_url: { url: `data:${preparedImage.mime};base64,${imageBase64}` } },
         ],
       }],
       temperature: 0.1,
@@ -1289,6 +1396,8 @@ export async function runVisionLayerAnalysis(input: VisionLayerAnalysisInput): P
       provider: request.route.provider,
       sourceKind: request.route.sourceKind,
       imagePath,
+      requestImagePath: preparedImage.requestPath,
+      imageCompatibility: preparedImage.compatibility,
       prompt,
       rawText: summary,
       nonBlocking: true,

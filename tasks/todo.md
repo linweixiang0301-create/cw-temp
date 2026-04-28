@@ -1,3 +1,57 @@
+# 2026-04-28 任务 — 修正 vision provider 图片输入兼容格式
+
+## 目标
+- 修正 `gemini-3-flash-preview` 在 PSD 重建 layer analysis 中的真实图片输入请求格式，避免当前 HTTP 400 直接 fallback。
+- 让 `/api/psd-rebuild/jobs` 能优先拿到结构化 layer JSON；只有 provider 真实失败或 JSON 不可解析时才进入单图层 fallback。
+- 保持既有 `/api/models/vision/qa`、image 生成、Photoshop job 和飞书只发 PNG 主链路不受影响。
+- 不写入、不展示 token/cookie/API key 明文。
+
+## 计划
+- [x] 对当前 vision 路由做真实最小请求探针，定位 `gemini-3-flash-preview` 接受的图片输入和 JSON 输出格式。
+- [x] 在 model routing 中加入兼容的 vision payload adapter，优先使用能让 Gemini 返回结构化 JSON 的格式。
+- [x] 更新 layer analysis 调用与错误审计，确保 fallback 仍非阻断且可追踪。
+- [x] 用真实上传图片跑 `/api/psd-rebuild/jobs`，确认 `gemini-3-flash-preview` 返回可解析 layer JSON。
+- [x] 运行类型检查、前端语法检查、密钥扫描，并记录回顾。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/model-routes/live-probe`，确认 vision route ready。
+- 用真实本地图片调用 `/api/uploads/images` 和 `/api/psd-rebuild/jobs`，确认作业不再因 HTTP 400 直接 fallback，manifest 含结构化 layer JSON。
+- 扫描 API 响应和 tracked files，确认没有 token/cookie/key 明文。
+
+## 回顾
+- 真实探针结论：
+  - 当前 OpenAI-compatible `image_url` data URL 请求格式对 `gemini-3-flash-preview` 是可用的。
+  - 真实 `final.png` 用原请求体返回 HTTP 200。
+  - 64x64 上传小图用原请求体返回 HTTP 400，provider 报无法处理输入图片。
+  - 将同一张真实小图放大为 256x256 后，`gemini-3-flash-preview` 返回 HTTP 200，并可输出严格 JSON。
+- 实现：
+  - `model-routing.ts` 新增 vision 图片兼容准备层。
+  - 对低于 provider 最小可处理尺寸的真实 PNG/JPG/WEBP，使用本机 `sips` 生成兼容副本，保存到 `~/.codex/ps-automation/model-artifacts/vision/compat`。
+  - `/api/models/vision/qa` 和 `/api/psd-rebuild/jobs` 的 layer analysis 都复用该兼容输入。
+  - PSD rebuild manifest 新增 `visionInput`，记录原图路径、实际请求图片路径和兼容处理元数据。
+- 真实验证：
+  - 服务已重启到 `http://127.0.0.1:3498`，PID `15352`。
+  - `/api/model-routes/live-probe`：vision `ready`，matched `gemini-3-flash-preview` 与 `gpt-5.5`。
+  - 使用真实上传图 `6165414e-3c52-4475-9434-91c006b9e0b3` 调用 `/api/psd-rebuild/jobs`：
+    - job id：`a71c5c4f-5f9f-4a6e-b8f0-7d1e82e8827d`
+    - status：`analyzed`
+    - model：`gemini-3-flash-preview`
+    - selectedRole：`primary`
+    - fallback：`null`
+    - manifest：`/Users/a1234/.codex/ps-automation/psd-rebuild/a71c5c4f-5f9f-4a6e-b8f0-7d1e82e8827d/layer-manifest.json`
+    - manifest status：`ai_analyzed`
+    - `visionInput.compatibility.applied=true`，原始 64x64，本机兼容副本 256x256。
+  - 使用同一张小图调用 `/api/models/vision/qa` 成功，返回 `status=completed`、主模型 `gemini-3-flash-preview`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - API 响应扫描未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-`。
+  - tracked-file secret scan 未发现 `sk-...` 明文。
+
 # 2026-04-28 任务 — 智能拆层 / PSD 重建 MVP 与图片上传
 
 ## 目标
