@@ -63,6 +63,14 @@
   - `node --check public/app.js`
   - `git diff --check`
   - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果。
+- 已推送远端 main：
+  - `03eb49085d134951b8b9832434d2fa8aeedbe084` — `Use image route for PSD layer analysis`
+- 远端 fresh clone 回归：
+  - clone 目录：`/tmp/ps-console-image-layer-analysis-check`
+  - clone HEAD：`03eb49085d134951b8b9832434d2fa8aeedbe084`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
 
 # 2026-04-28 任务 — 拆层模型职责命名与协作边界修正
 
