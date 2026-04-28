@@ -52,6 +52,13 @@
   - `node --check public/app.js`
   - `git diff --check`
   - 仓库密钥扫描无 `sk-...` 明文
+- 已推送远端 main：
+  - `8c08b6ef40e8a45f16a0e13501fafe89f4c455d7` — `Add design006 login gate`
+- 远端 fresh clone 回归：
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 仓库密钥扫描无 `sk-...` 明文
 
 # 2026-04-28 任务 — 发送前 Vision QA 门禁与发送审计串联
 
