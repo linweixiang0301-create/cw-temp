@@ -46,6 +46,13 @@
   - `node --check public/app.js`
   - `git diff --check`
   - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果。
+- 已推送远端 main：
+  - `7b968c600978102c26ec362dde803ba552d30b3e` — `Add PSD rebuild layer library`
+- 远端 fresh clone 回归：
+  - clone HEAD：`7b968c600978102c26ec362dde803ba552d30b3e`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
 
 # 2026-04-28 任务 — 修正 vision provider 图片输入兼容格式
 
