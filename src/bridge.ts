@@ -14,6 +14,10 @@ export async function loadManagedChromeBridge(): Promise<any> {
   return import(bridgeUrl('src/managed-chrome-runtime.ts'));
 }
 
+export async function loadBrowserCdpBridge(): Promise<any> {
+  return import(bridgeUrl('src/browser-cdp.ts'));
+}
+
 export async function loadPhotoshopConfigBridge(): Promise<any> {
   return import(bridgeUrl('src/photoshop-config.ts'));
 }

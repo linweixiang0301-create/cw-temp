@@ -1,3 +1,58 @@
+# 2026-04-28 任务 — design006 登录态验证分区与下载前闸门
+
+## 目标
+- 参考抖音自动化 UI，在 PS 控制台“模板与来源”里新增 design006 登录态验证分区。
+- UI 未确认登录态前，禁用 design006 URL 解析、搜索和下载入口。
+- 后端在真实解析 / 搜索 / 下载前再次探测持久 profile 登录态，未登录时直接阻断，不执行下载指令。
+- 登录态检测使用真实 design006 持久 Chrome profile，不使用 mock，不保存账号、cookie 或 token。
+
+## 计划
+- [x] 梳理当前 design006 临时浏览器、登录挂起和来源 UI 结构。
+- [x] 新增 design006 登录态检测 / 打开登录窗口 / 关闭登录窗口 API。
+- [x] 在 resolve/search/download 后端入口前加登录态硬闸门。
+- [x] UI 新增登录态验证分区，展示状态、检测时间、profile、窗口端口和操作按钮。
+- [x] UI 在登录未通过时锁住“解析 URL / 下载到 PSD 收件箱”，并给出清晰阻断状态。
+- [x] 更新 README 与任务回顾，运行检查和真实 API smoke。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/design006/login/check`，确认返回当前 profile 的真实 logged_in / not_logged_in / unknown。
+- 如当前未登录，真实调用 `/api/design006/resolve` 应在下载/解析前阻断；如当前已登录，应允许继续解析。
+
+## 回顾
+- 新增 `Design006BrowserManager` 登录态状态：
+  - `loginCheck`：最近一次真实检测状态、时间、profile、端口、summary、findings。
+  - `loginWindow`：由 UI 手动打开的 design006 专用 Chrome 登录窗口。
+  - 检测使用真实持久 profile `~/.codex/ps-automation/design006-profile`，不保存账号、cookie、token。
+- 新增 API：
+  - `POST /api/design006/login/check`
+  - `POST /api/design006/login/open`
+  - `POST /api/design006/login/close`
+- 后端硬闸门：
+  - `/api/design006/resolve`
+  - `/api/design006/search`
+  - `/api/design006/download`
+  - 三者都会先真实探测登录态；非 `logged_in` 时直接阻断，不执行解析/搜索/下载主体动作。
+- UI：
+  - “模板与来源”新增 design006 登录态验证分区。
+  - 展示 Profile Status、Checked At、profile 路径、检测/登录窗口端口。
+  - 未通过登录态检测时禁用“解析 URL”和“下载到 PSD 收件箱”。
+  - 提供“检查登录态 / 打开登录窗口 / 关闭登录窗口”三个真实操作按钮。
+- README 已补充登录态分区和新 API。
+- 真实验证：
+  - 当前主服务 `http://127.0.0.1:3498` 已重启到最新代码。
+  - 当前真实 design006 profile 检测结果：`not_logged_in`。
+  - 主服务调用 `/api/design006/resolve` 返回 HTTP 500 阻断：`解析 design006 URL 已阻断...未登录...`，没有继续返回 candidate。
+  - 隔离空 profile 服务 `3620` 验证同样返回 `not_logged_in`，解析 URL 被阻断。
+  - `login/open` 真实打开 design006 专用登录窗口，`login/close` 真实关闭，端口 `9232`。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - 仓库密钥扫描无 `sk-...` 明文
+
 # 2026-04-28 任务 — 发送前 Vision QA 门禁与发送审计串联
 
 ## 目标

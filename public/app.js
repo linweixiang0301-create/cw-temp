@@ -112,6 +112,67 @@ function badge(label, value, tone = 'neutral') {
   return `<div class="status-item ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
+function design006LoginCheck() {
+  return state.status?.design006?.loginCheck || null;
+}
+
+function design006AuthReady() {
+  return design006LoginCheck()?.status === 'logged_in';
+}
+
+function design006AuthLabel(status) {
+  if (status === 'logged_in') return '已登录';
+  if (status === 'not_logged_in') return '未登录';
+  if (status === 'unknown') return '未知';
+  if (status === 'error') return '检测失败';
+  if (status === 'pending_login') return '登录挂起';
+  return '未检测';
+}
+
+function renderDesign006AuthPanel(design006 = {}) {
+  const check = design006?.loginCheck || {};
+  const pendingLogin = design006?.pendingLogin || null;
+  const loginWindow = design006?.loginWindow || null;
+  const status = pendingLogin ? 'pending_login' : String(check.status || 'not_checked');
+  const ready = status === 'logged_in';
+  const labelEl = $('design006AuthLabel');
+  if (!labelEl) return;
+  labelEl.textContent = design006AuthLabel(status);
+  labelEl.className = ready ? 'ok' : status === 'not_checked' ? '' : 'warn';
+  $('design006AuthCheckedAt').textContent = check.checkedAt ? formatLocalDateTime(check.checkedAt) : '等待检测';
+  const summary = pendingLogin
+    ? `下载登录窗口等待继续：${pendingLogin.title || pendingLogin.detailUrl || pendingLogin.id}`
+    : check.summary || (ready ? 'design006 profile 已通过登录态检测。' : '解析 URL 和下载前需要先通过真实登录态检测。');
+  $('design006AuthSummary').textContent = summary;
+  const profileLabel = [
+    design006.profileDir || check.profileDir || '-',
+    loginWindow ? `窗口端口 ${loginWindow.port}` : check.port ? `检测端口 ${check.port}` : '',
+  ].filter(Boolean).join(' · ');
+  $('design006AuthProfile').textContent = profileLabel;
+  $('resolveBtn').disabled = !ready || Boolean(pendingLogin);
+  $('downloadBtn').disabled = !ready || Boolean(pendingLogin);
+  $('checkDesign006LoginBtn').disabled = false;
+  $('openDesign006LoginBtn').disabled = Boolean(pendingLogin);
+  $('closeDesign006LoginBtn').disabled = !loginWindow;
+}
+
+function renderDesign006LoginResult(payload) {
+  const check = payload?.loginCheck || payload?.result?.loginCheck || payload?.design006?.loginCheck || {};
+  const status = String(check.status || payload?.result?.status || 'unknown');
+  const tone = status === 'logged_in' ? 'ready' : 'blocked';
+  return `
+    <div class="preflight-status ${tone}">
+      <strong>design006 登录态：${escapeHtml(design006AuthLabel(status))}</strong>
+      <span>${escapeHtml(check.summary || payload?.result?.message || '-')}</span>
+    </div>
+    ${Array.isArray(check.findings) && check.findings.length ? `
+      <div class="issue-list">
+        ${check.findings.map((item) => `<div class="issue warn"><b>login_check</b>${escapeHtml(item)}</div>`).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
 function renderStatus(payload) {
   state.status = payload;
   state.presets = Array.isArray(payload.presets) ? payload.presets : [];
@@ -136,7 +197,12 @@ function renderStatus(payload) {
     state.pendingId = payload.design006.pendingLogin.id;
     $('continueLoginBtn').disabled = false;
     $('cancelLoginBtn').disabled = false;
+  } else {
+    state.pendingId = null;
+    $('continueLoginBtn').disabled = true;
+    $('cancelLoginBtn').disabled = true;
   }
+  renderDesign006AuthPanel(payload.design006);
   renderFeishuDefaultStatus(payload.feishu);
   renderModelRoutes(payload.models || []);
   renderPresetList();
@@ -3721,6 +3787,38 @@ $('runRegressionBtn').addEventListener('click', async () => {
     await runRegressionCheck();
   } catch (error) {
     setMessage('regressionResults', `<div class="issue err"><b>regression_error</b>${escapeHtml(error.message || error.payload?.error || '检查失败')}</div>`, 'html');
+  }
+});
+
+$('checkDesign006LoginBtn').addEventListener('click', async () => {
+  try {
+    setMessage('designResults', '正在真实检测 design006 登录态...');
+    const payload = await api('/api/design006/login/check', { method: 'POST', body: '{}' });
+    await refresh();
+    setMessage('designResults', renderDesign006LoginResult(payload), 'html');
+  } catch (error) {
+    setMessage('designResults', error.message);
+  }
+});
+
+$('openDesign006LoginBtn').addEventListener('click', async () => {
+  try {
+    setMessage('designResults', '正在打开 design006 专用登录窗口...');
+    const payload = await api('/api/design006/login/open', { method: 'POST', body: '{}' });
+    await refresh();
+    setMessage('designResults', renderDesign006LoginResult(payload), 'html');
+  } catch (error) {
+    setMessage('designResults', error.message);
+  }
+});
+
+$('closeDesign006LoginBtn').addEventListener('click', async () => {
+  try {
+    const payload = await api('/api/design006/login/close', { method: 'POST', body: '{}' });
+    await refresh();
+    setMessage('designResults', renderDesign006LoginResult(payload), 'html');
+  } catch (error) {
+    setMessage('designResults', error.message);
   }
 });
 

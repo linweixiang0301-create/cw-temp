@@ -46,6 +46,7 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - design006 操作会按需打开临时 Chrome 窗口。
 - Chrome 窗口执行完会自动关闭。
 - 登录态保存在持久 profile：`~/.codex/ps-automation/design006-profile`。
+- “模板与来源”里的登录态验证分区会真实探测该 profile；未通过前，UI 和后端都会阻断 design006 解析、搜索和下载。
 - 默认从 `9232` 起寻找空闲 CDP 端口，避免占用已有 `9231`。
 - 不使用 mock 数据；解析、搜索、下载都走真实 design006 链路。
 - 下载可能消耗 design006 积分或受会员权限限制，控制台只按真实结果返回，不绕过限制。
@@ -62,6 +63,9 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `POST /api/design006/resolve`
 - `POST /api/design006/search`
 - `POST /api/design006/download`
+- `POST /api/design006/login/check`
+- `POST /api/design006/login/open`
+- `POST /api/design006/login/close`
 - `POST /api/design006/login/continue`
 - `POST /api/design006/login/cancel`
 - `POST /api/jobs`

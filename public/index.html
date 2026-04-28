@@ -89,6 +89,25 @@
           </div>
           <div id="sourceContent" class="source-content" hidden>
             <div class="source-grid">
+              <section class="design006-auth-card" aria-label="design006 登录态验证">
+                <div class="auth-fact">
+                  <span>Profile Status</span>
+                  <strong id="design006AuthLabel">未检测</strong>
+                </div>
+                <div class="auth-fact">
+                  <span>Checked At</span>
+                  <strong id="design006AuthCheckedAt">等待检测</strong>
+                </div>
+                <div class="auth-profile">
+                  <span id="design006AuthSummary">解析 URL 和下载前需要先通过真实登录态检测。</span>
+                  <code id="design006AuthProfile">-</code>
+                </div>
+                <div class="auth-actions">
+                  <button id="checkDesign006LoginBtn" type="button" class="secondary">检查登录态</button>
+                  <button id="openDesign006LoginBtn" type="button" class="secondary">打开登录窗口</button>
+                  <button id="closeDesign006LoginBtn" type="button" class="secondary">关闭登录窗口</button>
+                </div>
+              </section>
               <label class="field wide">
                 <span>design006 详情页</span>
                 <input id="designUrl" value="https://www.design006.com/detail-99213334643">

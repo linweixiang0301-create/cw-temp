@@ -479,6 +479,71 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.design006-auth-card {
+  align-items: center;
+  background: linear-gradient(135deg, #f8fafc, #eef6ff);
+  border: 1px solid #dbe7f6;
+  border-radius: 7px;
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: 120px 180px minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.auth-fact,
+.auth-profile {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auth-fact span,
+.auth-profile span {
+  color: #475467;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auth-fact strong {
+  color: #202637;
+  font-size: 14px;
+}
+
+.auth-fact strong.ok {
+  color: var(--green);
+}
+
+.auth-fact strong.warn {
+  color: var(--amber);
+}
+
+.auth-profile span,
+.auth-profile code {
+  overflow-wrap: anywhere;
+}
+
+.auth-profile code {
+  background: #ffffff;
+  border: 1px solid #d7e3f2;
+  border-radius: 6px;
+  color: #1f2937;
+  display: block;
+  font-size: 11px;
+  padding: 6px 7px;
+}
+
+.auth-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.auth-actions button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
 .layer-workbench {
   align-items: stretch;
   display: grid;
@@ -2355,7 +2420,9 @@ pre {
   }
 
   .status-strip,
-  .source-grid {
+  .source-grid,
+  .design006-auth-card,
+  .auth-actions {
     grid-template-columns: 1fr;
   }
 

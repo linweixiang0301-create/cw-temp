@@ -1679,6 +1679,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/design006/login/check') {
+      const loginCheck = await design006.checkLogin();
+      sendJson(res, 200, {
+        ok: true,
+        ready: loginCheck.status === 'logged_in',
+        loginCheck,
+        design006: design006.status(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/design006/login/open') {
+      const result = await design006.openLoginWindow();
+      sendJson(res, 200, { ok: true, result, design006: design006.status() });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/design006/login/close') {
+      const result = await design006.closeLoginWindow();
+      sendJson(res, 200, { ok: true, result, design006: design006.status() });
+      return true;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/design006/login/continue') {
       const body = await readJsonBody<{ pendingId?: string }>(req);
       sendJson(res, 200, await design006.continueLogin(String(body.pendingId || '').trim()));
