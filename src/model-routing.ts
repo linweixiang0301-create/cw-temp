@@ -177,8 +177,8 @@ export type ModelRouteOrchestration = {
 
 const ROUTES: RouteMeta[] = [
   { key: 'instruction', label: '指令解析模型', envPrefix: 'PS_AUTOMATION_INSTRUCTION' },
-  { key: 'image', label: '生图 / 拆层分析模型', envPrefix: 'PS_AUTOMATION_IMAGE' },
-  { key: 'vision', label: '最终质检模型', envPrefix: 'PS_AUTOMATION_VISION' },
+  { key: 'image', label: '生图模型', envPrefix: 'PS_AUTOMATION_IMAGE' },
+  { key: 'vision', label: '视觉拆层 / 最终质检模型', envPrefix: 'PS_AUTOMATION_VISION' },
 ];
 
 const DEFAULT_IMAGE_SIZE = '1024x1024';
@@ -774,8 +774,8 @@ function routeBoundary(route: ResolvedModelRoute): string {
 
 function routeFallbackMode(route: ResolvedModelRoute): string {
   if (!route.fallback) return route.key === 'instruction' ? '本地 Codex 单模型控制面。' : '未配置备选模型。';
-  if (route.key === 'image') return '模型级 fallback：主模型负责生图和拆层分析，备选用于主模型失败。';
-  if (route.key === 'vision') return '模型级 fallback：主模型负责最终 PNG 质检，备选用于主模型失败。';
+  if (route.key === 'image') return '模型级 fallback：主模型负责真实生图，备选用于主模型失败。';
+  if (route.key === 'vision') return '模型级 fallback：主模型负责视觉拆层分析和最终 PNG 质检，备选用于主模型失败。';
   return '模型级 fallback。';
 }
 
@@ -788,16 +788,16 @@ function stageForRoute(route: ResolvedModelRoute, probe: ModelRouteProbeResult |
       blockingPolicy: '未就绪只影响 AI 指令解析；手动 slot 操作仍可继续。',
     },
     image: {
-      role: '产物与拆层面：生成真实图片文件，并按 image-2 路由读取扁平图输出 layer JSON。',
-      input: '生图 prompt、目标 slot，或上传的 JPG/PNG/WEBP 拆层源图。',
-      output: '本机 model-artifacts/image 图片文件，或 PSD 重建 layer manifest。',
-      blockingPolicy: '生图失败回退 manual_file；拆层失败回退单图层 manifest，不生成假图层。',
+      role: '产物生成面：根据 prompt 生成真实本机图片文件；不承担扁平图拆层分析。',
+      input: '生图 prompt、目标 slot、尺寸与风格约束。',
+      output: '本机 model-artifacts/image 图片文件。',
+      blockingPolicy: '生图失败回退 manual_file，不生成假文件。',
     },
     vision: {
-      role: '质检面：检查 Photoshop 导出的最终 PNG。',
-      input: 'Photoshop job 导出的 final.png。',
-      output: 'QA 摘要、审计记录和发送前质量提示。',
-      blockingPolicy: '质检失败回退 manual_review，不阻断 final.png 飞书投递。',
+      role: '视觉结构面：读取扁平图片生成 AI 重建 layer JSON，并检查 Photoshop 导出的最终 PNG。',
+      input: '上传的 JPG/PNG/WEBP 拆层源图，或 Photoshop job 导出的 final.png。',
+      output: 'PSD 重建 layer manifest、QA 摘要、审计记录和发送前质量提示。',
+      blockingPolicy: '拆层失败回退单图层 manifest；质检失败回退 manual_review，不阻断 final.png 飞书投递。',
     },
   };
   return {
@@ -847,15 +847,15 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       code: 'image_generation_ready',
       status: image.ready && probeByKey(probes, 'image')?.status === 'ready' ? 'ready' : 'blocked',
       message: image.ready
-        ? `image 主模型 ${image.primary || '-'} 可用，将用于生图与拆层分析；备选 ${image.fallback || '未配置'}。`
-        : 'image 路由未就绪，AI 图片槽位会回退到 manual_file，PSD 拆层会回退单图层 manifest。',
+        ? `image 主模型 ${image.primary || '-'} 可用，将只用于真实生图；备选 ${image.fallback || '未配置'}。`
+        : 'image 路由未就绪，AI 图片槽位会回退到 manual_file。',
     },
     {
       code: 'vision_quality_ready',
       status: vision.ready && probeByKey(probes, 'vision')?.status === 'ready' ? 'ready' : 'warning',
       message: vision.ready
-        ? `最终质检主模型 ${vision.primary || '-'} 可用，备选 ${vision.fallback || '未配置'}。`
-        : '最终质检路由未就绪，发送前 QA 会回退到 manual_review。',
+        ? `视觉分析主模型 ${vision.primary || '-'} 可用于拆层建议与最终质检，备选 ${vision.fallback || '未配置'}。`
+        : '视觉分析路由未就绪，拆层会回退单图层 manifest，发送前 QA 会回退 manual_review。',
     },
     {
       code: 'fallback_model_coverage',
@@ -881,7 +881,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
     {
       code: 'main_chain_non_blocking',
       status: 'ready',
-      message: 'image 生图失败回退 manual_file，image 拆层失败回退单图层 manifest，vision 质检失败回退 manual_review，不阻断 Photoshop + 飞书主链路。',
+      message: 'image 生图失败回退 manual_file，vision 拆层失败回退单图层 manifest，vision 质检失败回退 manual_review，不阻断 Photoshop + 飞书主链路。',
     },
   ];
   const handoffs: ModelRouteOrchestration['handoffs'] = [
@@ -890,7 +890,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       to: 'image',
       status: handoffStatus(routes, ['instruction', 'image'], true),
       label: '指令到 image 模型',
-      message: 'instruction 负责整理用户意图；image 负责生成真实本地素材，也负责 PSD 重建的拆层分析。',
+      message: 'instruction 负责整理用户意图；image 只负责生成真实本地素材。',
     },
     {
       from: 'image',
@@ -900,11 +900,11 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       message: 'image 成功后落盘到本机文件，再作为 image.replace.ai / local 动作进入 Photoshop job。',
     },
     {
-      from: 'image',
+      from: 'vision',
       to: 'photoshop',
-      status: handoffStatus(routes, ['image'], true),
+      status: handoffStatus(routes, ['vision'], true),
       label: '拆层分析到 PSD 重建',
-      message: '上传扁平图片先由 image-2 路由输出 layer manifest，再生成本地 rebuild.jsx；失败只生成真实单图层 fallback。',
+      message: '上传扁平图片由 vision 路由输出 AI 重建 layer manifest，再生成本地 rebuild.jsx；失败只生成真实单图层 fallback。',
     },
     {
       from: 'photoshop',
@@ -940,7 +940,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
     {
       code: 'keep_main_chain_non_blocking',
       priority: 'low',
-      message: '保持现有策略：image 生图/拆层和 vision 质检失败都写审计并回退人工路径，不阻断 PS + 飞书主链路。',
+      message: '保持现有策略：image 生图、vision 拆层和 vision 质检失败都写审计并回退人工路径，不阻断 PS + 飞书主链路。',
     },
   ];
   const status = checks.some((check) => check.status === 'blocked')
@@ -955,7 +955,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       ? '模型协作链路存在阻断项，需要先修复路由。'
       : status === 'warning'
         ? '模型协作链路可运行，存在 provider 级冗余等可优化项。'
-        : '模型协作链路健康：本地控制、image-2 拆层/生图和非阻断质检。',
+        : '模型协作链路健康：本地控制、image 生图、vision 拆层与非阻断质检。',
     stages,
     handoffs,
     checks,
@@ -1372,7 +1372,7 @@ export async function runLayerAnalysis(input: LayerAnalysisInput): Promise<Recor
   if (!imagePath || !fs.existsSync(imagePath) || !fs.statSync(imagePath).isFile()) {
     throw new ModelRouteError('拆层分析图片不存在，无法调用拆层分析模型。', { imagePath });
   }
-  const routeKey = input.routeKey === 'vision' ? 'vision' : 'image';
+  const routeKey = input.routeKey === 'image' ? 'image' : 'vision';
   const route = getResolvedModelRoute(routeKey);
   const preparedImage = prepareVisionImageForProvider(imagePath);
   const imageBase64 = fs.readFileSync(preparedImage.requestPath).toString('base64');

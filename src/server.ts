@@ -919,7 +919,7 @@ async function modelRoutingRegressionPayload(): Promise<Record<string, unknown>>
     {
       code: 'vision_non_blocking_policy',
       status: 'ready',
-      message: 'image 拆层失败回退单图层 manifest；vision 质检失败或未配置时返回 manual_review，不阻断 Photoshop / 飞书主链路。',
+      message: 'vision 拆层失败回退单图层 manifest；vision 质检失败或未配置时返回 manual_review，不阻断 Photoshop / 飞书主链路。',
     },
     {
       code: 'usage_audit',
@@ -1259,7 +1259,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           modelId: String(body.modelId || '').trim(),
           prompt: String(body.prompt || '').trim(),
           executePhotoshop: body.executePhotoshop === true,
-          analysisRouteKey: body.analysisRouteKey === 'vision' ? 'vision' : 'image',
+          analysisRouteKey: body.analysisRouteKey === 'image' ? 'image' : 'vision',
         })),
         jobs: listPsdRebuildJobs(),
       });

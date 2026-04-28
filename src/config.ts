@@ -72,7 +72,7 @@ export function getModelRoutingStatus(): ModelRouteStatus[] {
     },
     {
       key: 'image',
-      label: '生图 / 拆层分析模型',
+      label: '生图模型',
       configured: Boolean(envValue('PS_AUTOMATION_IMAGE_MODEL')),
       primary: envValue('PS_AUTOMATION_IMAGE_MODEL'),
       fallback: envValue('PS_AUTOMATION_IMAGE_FALLBACK_MODEL'),
@@ -80,7 +80,7 @@ export function getModelRoutingStatus(): ModelRouteStatus[] {
     },
     {
       key: 'vision',
-      label: '最终质检模型',
+      label: '视觉拆层 / 最终质检模型',
       configured: Boolean(envValue('PS_AUTOMATION_VISION_MODEL')),
       primary: envValue('PS_AUTOMATION_VISION_MODEL'),
       fallback: envValue('PS_AUTOMATION_VISION_FALLBACK_MODEL'),

@@ -1,3 +1,61 @@
+# 2026-04-29 任务 — 修正 image-2 拆层能力边界
+
+## 目标
+- 按用户最新纠正：调用端的 `image-2` 没有拆解图层能力，不能再作为 PSD 重建拆层分析模型。
+- 将 `image` 路由恢复为只负责真实生图产物；PSD 重建拆层分析默认走 `vision` 路由生成结构化 layer JSON。
+- UI、模型协作说明、manifest 与 README 都明确：拆层是 AI 辅助重建建议，不是 image-2 原生拆层，也不是原始 PSD 图层恢复。
+- 保留历史 `image.layer_analysis` 审计兼容，但新作业默认写入 `vision.layer_analysis`。
+
+## 计划
+- [x] 使用用户给定提示词真实调用 `gpt-image-2`，验证是否返回 PS 可打开的分层 PSD。
+- [x] 更新模型路由标签与协作说明，移除 “image-2 拆层” 职责。
+- [x] 更新 PSD 重建服务与 API 默认值：`analysisRouteKey=vision`。
+- [x] 更新 UI 下拉、运行提示、manifest 分工文案和 README。
+- [x] 运行真实 API 验证、类型检查、前端语法检查、密钥扫描。
+- [x] 记录回顾、教训和阶段日志。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/model-routes/orchestration`，确认 image 只负责生图，vision 负责拆层分析 + 最终 QA。
+- 真实调用 `/api/psd-rebuild/jobs`，确认新 manifest 默认 `analysisRoute=vision`、审计写入 `vision.layer_analysis`。
+- 扫描 tracked files，确认没有 token/cookie/key 明文。
+
+## 当前真实测试结果
+- 使用用户提示词真实调用 `/api/models/image/generate`，指定 `modelId=gpt-image-2`。
+- 返回状态：`generated`；命中 endpoint：`images`；模型：`gpt-image-2`；耗时约 `39s`。
+- 产物路径：`/Users/a1234/.codex/ps-automation/model-artifacts/image/2026-04-28T16-14-18-556Z-image2-layered-psd-capability-test-a2f2387c.png`。
+- 文件检测：`file` 与 `sips` 均确认是 `image/png`，`1254 x 1254`，大小 `1,105,713 B`；文件头为 PNG 魔数 `89 50 4E 47`，不是 PSD 的 `8BPS`。
+- Photoshop 2026 真实打开验证：`doc.layers.length=1`，文档模式 `RGB`；结论是单层扁平 PNG，不是分层 PSD。
+
+## 回顾
+- 结论：`gpt-image-2` 可以根据提示生成图像，但不能通过提示词让 provider 输出 PS 可打开的分层 PSD；本次真实产物是 PNG，Photoshop 打开后只有 1 个图层。
+- UI / 路由边界已收口：
+  - `image` 标签改为“生图模型”，只负责真实生图。
+  - `vision` 标签改为“视觉拆层 / 最终质检模型”，负责 PSD 重建 layer analysis 和 final.png QA。
+  - PSD 重建面板下拉读取 `vision` 路由模型，提交 `analysisRouteKey=vision`。
+- 后端默认值已改回：`createPsdRebuildJob()` 和 `/api/psd-rebuild/jobs` 默认使用 `vision` 路由；旧 `image.layer_analysis` 仅保留兼容。
+- 真实验证：
+  - 服务已重启到 `http://127.0.0.1:3498`，PID `50895`。
+  - `/api/status` 返回 image label `生图模型`，vision label `视觉拆层 / 最终质检模型`。
+  - `/api/model-routes/orchestration` 返回 image 不承担扁平图拆层，handoff 为 `vision -> photoshop` 的“拆层分析到 PSD 重建”。
+  - 使用本次 `gpt-image-2` 真实 PNG 调用 `/api/psd-rebuild/jobs`：
+    - job id：`3b4171d1-9bd7-4aeb-ba9a-ece9333bfd91`
+    - manifest：`/Users/a1234/.codex/ps-automation/psd-rebuild/3b4171d1-9bd7-4aeb-ba9a-ece9333bfd91/layer-manifest.json`
+    - `modelRoleBoundary.analysisRoute=vision`
+    - `analysisInput.routeKey=vision`
+    - `visionInput` 已写入
+    - usage history 写入 `vision.layer_analysis`
+  - 本次 vision provider 返回文本但不是可解析严格 JSON，因此按设计生成真实单图层 fallback，没有伪造拆层。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/regression/model-routing` status `ready`
+  - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果
+- 未发送飞书，未外发 PSD。
+
 # 2026-04-28 任务 — 拆解图片图层模型切换到 image-2
 
 ## 目标

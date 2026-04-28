@@ -154,7 +154,7 @@
           <div class="section-head compact">
             <div>
               <h2>智能拆层 / PSD 重建</h2>
-              <p>上传扁平图片，默认用 image-2 拆解图层并生成结构化 layer JSON；失败回退单图层重建包。</p>
+              <p>上传扁平图片，默认由视觉模型生成 AI 重建 layer JSON；失败回退单图层重建包。</p>
             </div>
           </div>
           <div class="psd-rebuild-grid">
@@ -173,7 +173,7 @@
             <label class="field">
               <span>拆层分析模型</span>
               <select id="psdRebuildAnalysisModel"></select>
-              <small class="field-hint">使用 image 路由；当前优选为 gpt-image-2。</small>
+              <small class="field-hint">使用 vision 路由；image-2 只负责真实生图，不承担拆层分析。</small>
             </label>
             <label class="check-row psd-rebuild-check">
               <input id="psdRebuildExecutePhotoshop" type="checkbox">

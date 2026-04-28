@@ -303,7 +303,7 @@ function buildManifest(input: {
     modelRoleBoundary: {
       analysisRoute: input.analysisRouteKey,
       analysisPurpose: input.analysisRouteKey === 'image'
-        ? '使用 image 路由主模型读取扁平图片并输出结构化 layer JSON。'
+        ? '历史兼容路径：image 路由仅用于显式请求；默认不再承担拆层分析。'
         : '使用 vision 路由读取扁平图片并输出结构化 layer JSON。',
       generationRoute: 'image',
       generationPurpose: '后续重绘、补全或生成图层素材时才调用 image.generate，且必须落成真实本机图片文件。',
@@ -792,7 +792,7 @@ function safeAddLayerAnalysisUsage(input: {
 
 export async function createPsdRebuildJob(input: CreatePsdRebuildJobInput): Promise<Record<string, unknown>> {
   const source = resolveSource(input);
-  const analysisRouteKey = input.analysisRouteKey === 'vision' ? 'vision' : 'image';
+  const analysisRouteKey = input.analysisRouteKey === 'image' ? 'image' : 'vision';
   const jobId = crypto.randomUUID();
   const dir = rebuildDir(jobId);
   const layerManifestPath = path.join(dir, 'layer-manifest.json');
