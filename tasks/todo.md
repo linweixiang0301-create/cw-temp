@@ -45,6 +45,14 @@
   - `/api/model-routes/live-probe`
   - `/api/regression/model-routing`
   - API 响应和本机 runtime state 均未包含 `access_token`、`refresh_token`、`id_token`、`Bearer` 或 `sk-` 明文。
+- 已推送远端 main：
+  - `3421306b519040799b56e8bfa1d56e47eb474dfb` — `Add Codex login instruction route`
+- 远端 fresh clone 回归：
+  - clone HEAD：`3421306b519040799b56e8bfa1d56e47eb474dfb`
+  - `npm ci` 通过
+  - `npm run check` 通过
+  - `node --check public/app.js` 通过
+  - 空 `CODEX_HOME` / 空 runtime 不会伪造 Codex 登录态；instruction 保持未配置并返回 `model_missing`。
 
 # 2026-04-28 任务 — design006 下载前预检与确认闸门
 
