@@ -53,7 +53,8 @@
   - `git diff --check`
   - 仓库密钥扫描无 `sk-...` 明文
 - 已推送远端 main：
-  - `8c08b6ef40e8a45f16a0e13501fafe89f4c455d7` — `Add design006 login gate`
+  - 实现：`8c08b6ef40e8a45f16a0e13501fafe89f4c455d7` — `Add design006 login gate`
+  - 记录：`62769dc` — `Record design006 login gate validation`
 - 远端 fresh clone 回归：
   - `npm ci` 通过
   - `npm run check` 通过
