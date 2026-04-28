@@ -154,7 +154,7 @@
           <div class="section-head compact">
             <div>
               <h2>智能拆层 / PSD 重建</h2>
-              <p>上传扁平图片，生成 AI 重建层 manifest；这是重建层，不是原始 PSD 图层解析。</p>
+              <p>上传扁平图片，先由视觉模型生成结构化 layer JSON；生图模型只用于后续重绘或补全真实素材。</p>
             </div>
           </div>
           <div class="psd-rebuild-grid">
@@ -171,8 +171,9 @@
               <input id="psdRebuildImagePath" placeholder="/path/to/source.jpg">
             </label>
             <label class="field">
-              <span>Vision 模型</span>
+              <span>拆层分析模型</span>
               <select id="psdRebuildVisionModel"></select>
+              <small class="field-hint">读取图片并输出 layer manifest，不负责直接生图。</small>
             </label>
             <label class="check-row psd-rebuild-check">
               <input id="psdRebuildExecutePhotoshop" type="checkbox">

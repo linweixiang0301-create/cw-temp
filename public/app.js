@@ -889,12 +889,18 @@ function layerManifestSummary(layerManifest) {
 function renderLayerManifestPreview(layerManifest) {
   if (!layerManifest) return '';
   const summary = layerManifestSummary(layerManifest);
+  const roleBoundary = layerManifest.modelRoleBoundary || null;
   return `
     <div class="psd-layer-manifest">
       <div class="preflight-status ${layerManifest.status === 'ai_analyzed' ? 'ready' : 'blocked'}">
-        <strong>${escapeHtml(layerManifest.status === 'ai_analyzed' ? 'Vision 拆层建议已生成' : '单图层 fallback 已生成')}</strong>
+        <strong>${escapeHtml(layerManifest.status === 'ai_analyzed' ? '拆层分析 JSON 已生成' : '单图层 fallback 已生成')}</strong>
         <span>${escapeHtml(layerManifest.summary || '-')}</span>
       </div>
+      ${roleBoundary ? `
+        <div class="issue ok">
+          <b>模型分工</b>${escapeHtml(`${roleBoundary.analysisRoute || 'vision'} 负责拆层分析；${roleBoundary.generationRoute || 'image'} 只在重绘/补全素材时生成真实图片文件。`)}
+        </div>
+      ` : ''}
       <div class="psd-layer-list">
         ${summary.layers.slice(0, 10).map((layer) => `
           <div class="psd-layer-item ${escapeHtml(layer.type || 'raster')}">
@@ -935,7 +941,7 @@ function renderPsdRebuildJob(job, layerManifest = null, photoshop = null) {
           <div><dt>Layer Manifest</dt><dd>${escapeHtml(job.layerManifestPath || '-')}</dd></div>
           <div><dt>Photoshop JSX</dt><dd>${escapeHtml(job.photoshopScriptPath || '-')}</dd></div>
           <div><dt>PSD 输出</dt><dd>${escapeHtml(job.outputPsdExists ? job.outputPsdPath : '未导出；PSD 仍只在本地生成路径内处理')}</dd></div>
-          <div><dt>模型</dt><dd>${escapeHtml([job.model || '-', job.selectedRole || '', formatDurationMs(job.durationMs)].filter(Boolean).join(' · '))}</dd></div>
+          <div><dt>拆层分析模型</dt><dd>${escapeHtml([job.model || '-', job.selectedRole || '', formatDurationMs(job.durationMs)].filter(Boolean).join(' · '))}</dd></div>
           <div><dt>图层建议</dt><dd>${escapeHtml(`${job.layerCount || 0} layers · text ${job.textLayerCount || 0}`)}</dd></div>
         </dl>
         ${photoshop ? `
@@ -985,7 +991,7 @@ function renderPsdLayerLibraryItem(item, selectedId = '') {
           <div><dt>job</dt><dd>${escapeHtml(item.id || '-')}</dd></div>
           <div><dt>时间</dt><dd>${escapeHtml(formatLocalDateTime(item.updatedAt || item.generatedAt || item.createdAt))}</dd></div>
           <div><dt>图层</dt><dd>${escapeHtml(`${item.layerCount || 0} layers · text ${item.textLayerCount || 0}`)}</dd></div>
-          <div><dt>模型</dt><dd>${escapeHtml([item.model || '-', item.selectedRole || ''].filter(Boolean).join(' · '))}</dd></div>
+          <div><dt>分析模型</dt><dd>${escapeHtml([item.model || '-', item.selectedRole || ''].filter(Boolean).join(' · '))}</dd></div>
         </dl>
         <div class="button-row stretch psd-layer-library-actions">
           <button type="button" class="secondary small" data-psd-library-detail="${escapeHtml(item.id)}">详情</button>
@@ -1183,7 +1189,7 @@ async function startPsdRebuild() {
   const executePhotoshop = Boolean($('psdRebuildExecutePhotoshop')?.checked);
   $('startPsdRebuildBtn').disabled = true;
   $('startPsdRebuildBtn').textContent = '拆层中...';
-  setMessage('psdRebuildResults', '<div class="empty">正在调用真实 Vision 模型分析图片，并生成本地重建包...</div>', 'html');
+  setMessage('psdRebuildResults', '<div class="empty">正在调用真实拆层分析模型读取图片，并生成本地重建包...</div>', 'html');
   try {
     const payload = await api('/api/psd-rebuild/jobs', {
       method: 'POST',

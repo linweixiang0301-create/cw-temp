@@ -158,7 +158,7 @@ gpt-5.5=GPT55_FLASH_API_KEY
 
 - `instruction`：本地控制面，理解用户目标、组织 slot 操作和 prompt。
 - `image`：产物面，生成真实本机图片文件，失败回退 `manual_file`。
-- `vision`：质检面，检查最终 `final.png`，失败回退 `manual_review` 且不阻断飞书发送。
+- `vision`：视觉理解面，负责 PSD 重建的拆层分析和最终 `final.png` 质检；拆层失败回退单图层 manifest，质检失败回退 `manual_review`，都不阻断主链路。
 
 该分析还会标记模型级 fallback、provider 级故障覆盖、模型专用 Key Env 和主链路非阻断策略。
 
@@ -173,7 +173,9 @@ gpt-5.5=GPT55_FLASH_API_KEY
 - `POST /api/uploads/images`：multipart 上传图片，落盘到 `~/.codex/ps-automation/uploads/images`，返回真实路径、大小、mime、宽高和 sha256。
 - `POST /api/psd-rebuild/jobs`：基于上传图片或本机图片路径创建 PSD 重建作业。
 
-PSD 重建作业会优先调用当前 `vision` 路由生成 layer manifest。manifest 明确标注结果是“AI 重建层”，不是原始 PSD 图层恢复。对低分辨率上传图，vision 调用会保留原图路径，并在 `~/.codex/ps-automation/model-artifacts/vision/compat` 生成本地兼容副本用于 provider 输入。模型失败或返回非结构化文本时，接口只生成真实单图层 fallback manifest 和 Photoshop JSX，不伪造拆层结果。
+PSD 重建作业会优先调用当前 `vision` 路由生成 layer manifest。这里的“拆层”不是用生图模型直接完成：视觉模型负责读取原图并输出结构化 layer JSON，生图模型只在后续需要重绘、补全或生成某个图层素材时调用，并且必须落成本机真实图片文件。manifest 会记录 `modelRoleBoundary`，明确 analysis 使用 `vision`、generation 使用 `image`，且默认 PSD 重建作业不会伪造生图产物。
+
+manifest 明确标注结果是“AI 重建层”，不是原始 PSD 图层恢复。对低分辨率上传图，vision 调用会保留原图路径，并在 `~/.codex/ps-automation/model-artifacts/vision/compat` 生成本地兼容副本用于 provider 输入。模型失败或返回非结构化文本时，接口只生成真实单图层 fallback manifest 和 Photoshop JSX，不伪造拆层结果。
 
 如果请求体传 `executePhotoshop: true`，服务会尝试用本机 Photoshop 执行生成的 JSX，把上传图片保存成本地 `rebuilt.psd`，并按 vision 识别到的文字候选创建可编辑文本层。Photoshop 不可用或脚本失败时，作业仍保留本地 manifest / JSX / 审计记录，状态回退为人工复核，不影响既有 Photoshop + 飞书主链路。
 

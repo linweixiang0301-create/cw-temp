@@ -297,6 +297,13 @@ function buildManifest(input: {
       originalPsdRecovery: false,
       note: 'JPG/PNG/WEBP 不包含原始 PSD 图层；以下为 AI 辅助重建建议与本地 PSD 生成输入。',
     },
+    modelRoleBoundary: {
+      analysisRoute: 'vision',
+      analysisPurpose: '读取扁平图片并输出结构化 layer JSON。',
+      generationRoute: 'image',
+      generationPurpose: '后续重绘、补全或生成图层素材时才调用，且必须落成真实本机图片文件。',
+      generationInvokedInThisJob: false,
+    },
     model: input.model || null,
     selectedRole: input.selectedRole || null,
     visionInput: {

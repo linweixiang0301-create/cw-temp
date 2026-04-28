@@ -174,7 +174,7 @@ export type ModelRouteOrchestration = {
 const ROUTES: RouteMeta[] = [
   { key: 'instruction', label: '指令解析模型', envPrefix: 'PS_AUTOMATION_INSTRUCTION' },
   { key: 'image', label: '生图 / 图生图模型', envPrefix: 'PS_AUTOMATION_IMAGE' },
-  { key: 'vision', label: '预览 / 最终质检模型', envPrefix: 'PS_AUTOMATION_VISION' },
+  { key: 'vision', label: '视觉拆层 / 最终质检模型', envPrefix: 'PS_AUTOMATION_VISION' },
 ];
 
 const DEFAULT_IMAGE_SIZE = '1024x1024';
@@ -771,7 +771,7 @@ function routeBoundary(route: ResolvedModelRoute): string {
 function routeFallbackMode(route: ResolvedModelRoute): string {
   if (!route.fallback) return route.key === 'instruction' ? '本地 Codex 单模型控制面。' : '未配置备选模型。';
   if (route.key === 'image') return '模型级 fallback：主模型性价比优先，备选用于高质量/主模型失败。';
-  if (route.key === 'vision') return '模型级 fallback：主模型快速质检，备选用于主模型失败。';
+  if (route.key === 'vision') return '模型级 fallback：主模型负责拆层分析和快速质检，备选用于主模型失败。';
   return '模型级 fallback。';
 }
 
@@ -790,10 +790,10 @@ function stageForRoute(route: ResolvedModelRoute, probe: ModelRouteProbeResult |
       blockingPolicy: '失败回退 manual_file，不生成假图，不阻断手动上传素材。',
     },
     vision: {
-      role: '质检面：检查 Photoshop 导出的最终 PNG。',
-      input: 'Photoshop job 导出的 final.png。',
-      output: 'QA 摘要、审计记录、发送前质量提示。',
-      blockingPolicy: '失败回退 manual_review，不阻断 final.png 飞书投递。',
+      role: '视觉理解面：读取扁平图片生成 layer JSON，并检查 Photoshop 最终 PNG。',
+      input: '上传的 JPG/PNG/WEBP 或 Photoshop job 导出的 final.png。',
+      output: 'PSD 重建 layer manifest、QA 摘要、审计记录和发送前质量提示。',
+      blockingPolicy: '拆层失败回退单图层 manifest，质检失败回退 manual_review，均不阻断主链路。',
     },
   };
   return {
@@ -850,8 +850,8 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       code: 'vision_quality_ready',
       status: vision.ready && probeByKey(probes, 'vision')?.status === 'ready' ? 'ready' : 'warning',
       message: vision.ready
-        ? `质检主模型 ${vision.primary || '-'} 可用，备选 ${vision.fallback || '未配置'}。`
-        : '质检路由未就绪，发送前 QA 会回退到 manual_review。',
+        ? `视觉拆层/质检主模型 ${vision.primary || '-'} 可用，备选 ${vision.fallback || '未配置'}。`
+        : '视觉路由未就绪，PSD 重建会回退单图层 manifest，发送前 QA 会回退到 manual_review。',
     },
     {
       code: 'fallback_model_coverage',
@@ -877,7 +877,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
     {
       code: 'main_chain_non_blocking',
       status: 'ready',
-      message: 'image 失败回退 manual_file，vision 失败回退 manual_review，不阻断 Photoshop + 飞书主链路。',
+      message: 'image 失败回退 manual_file，vision 拆层失败回退单图层 manifest、质检失败回退 manual_review，不阻断 Photoshop + 飞书主链路。',
     },
   ];
   const handoffs: ModelRouteOrchestration['handoffs'] = [
@@ -901,6 +901,13 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       status: handoffStatus(routes, ['vision'], true),
       label: 'Photoshop 到质检',
       message: 'Photoshop 导出 final.png 后，vision 做发送前 QA；失败只记录人工复核。',
+    },
+    {
+      from: 'vision',
+      to: 'photoshop',
+      status: handoffStatus(routes, ['vision'], true),
+      label: '拆层分析到 PSD 重建',
+      message: '上传扁平图片先由 vision 输出 layer manifest，再生成本地 rebuild.jsx；image 模型只在需要重绘/补全素材时生成真实文件。',
     },
     {
       from: 'vision',
@@ -929,7 +936,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
     {
       code: 'keep_main_chain_non_blocking',
       priority: 'low',
-      message: '保持现有策略：模型失败写审计并回退人工路径，不阻断 PS + 飞书主链路。',
+      message: '保持现有策略：拆层分析、生成和质检失败都写审计并回退人工路径，不阻断 PS + 飞书主链路。',
     },
   ];
   const status = checks.some((check) => check.status === 'blocked')
@@ -944,7 +951,7 @@ export async function getModelRouteOrchestration(): Promise<ModelRouteOrchestrat
       ? '模型协作链路存在阻断项，需要先修复路由。'
       : status === 'warning'
         ? '模型协作链路可运行，存在 provider 级冗余等可优化项。'
-        : '模型协作链路健康：本地控制、真实生图、非阻断质检。',
+        : '模型协作链路健康：本地控制、真实生图、视觉拆层和非阻断质检。',
     stages,
     handoffs,
     checks,

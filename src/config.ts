@@ -80,7 +80,7 @@ export function getModelRoutingStatus(): ModelRouteStatus[] {
     },
     {
       key: 'vision',
-      label: '预览 / 最终质检模型',
+      label: '视觉拆层 / 最终质检模型',
       configured: Boolean(envValue('PS_AUTOMATION_VISION_MODEL')),
       primary: envValue('PS_AUTOMATION_VISION_MODEL'),
       fallback: envValue('PS_AUTOMATION_VISION_FALLBACK_MODEL'),

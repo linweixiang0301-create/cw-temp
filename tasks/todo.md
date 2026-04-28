@@ -1,3 +1,48 @@
+# 2026-04-28 任务 — 拆层模型职责命名与协作边界修正
+
+## 目标
+- 回应“拆解图片是否应由生图模型完成”的模型职责疑问，明确 PSD 重建的第一步是视觉分析模型输出结构化 layer JSON。
+- 在 UI 中把“Vision 模型”改成更准确的“拆层分析模型”，避免误解为最终质检或生图。
+- 在模型协作分析与 README 中说明：image 模型负责生成/补全真实图片素材，vision 模型负责读取图片、拆层分析和最终 PNG 质检；两者失败均不阻断 PS + 飞书主链路。
+- 不新增 mock，不伪造图层，不改变现有真实 provider 路由和 PSD local_only 边界。
+
+## 计划
+- [x] 更新 UI 文案：PSD 重建区模型字段、运行提示、manifest 预览和历史库里的模型标签。
+- [x] 更新模型协作后端说明：vision stage 覆盖“拆层分析 + 最终质检”，新增拆层分析到 Photoshop 的 handoff。
+- [x] 更新 README 与任务教训，固化“拆层分析不等于生图”的边界。
+- [x] 运行类型检查、前端语法检查、真实 API 状态检查和密钥扫描。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 真实调用 `/api/model-routes/orchestration`，确认返回的 stage / handoff 已区分 image 生成与 vision 拆层分析。
+- 真实调用 `/api/psd-rebuild/library?limit=1`，确认图层库 API 仍读取本机真实 job。
+- 扫描 tracked files，确认没有写入 token/cookie/key 明文。
+
+## 回顾
+- 回答模型职责：智能拆层第一步不是由生图模型直接完成，而是由视觉拆层模型读取扁平图并输出结构化 layer JSON；image 模型只在后续需要重绘/补全图层素材时生成真实本机图片文件。
+- UI 修正：
+  - “智能拆层 / PSD 重建”说明改为“视觉模型生成结构化 layer JSON，生图模型只用于后续重绘或补全真实素材”。
+  - 原“Vision 模型”字段改为“拆层分析模型”，并增加说明“不负责直接生图”。
+  - manifest 预览新增“模型分工”提示，历史库模型字段改为“分析模型”。
+- 后端协作说明修正：
+  - `vision` 路由标签改为“视觉拆层 / 最终质检模型”。
+  - `/api/model-routes/orchestration` 的 vision stage 现在说明其同时负责 PSD 重建 layer manifest 与 final.png QA。
+  - 新增 handoff：“拆层分析到 PSD 重建”，明确 `vision -> rebuild.jsx -> Photoshop`，image 只在重绘/补全真实素材时介入。
+  - 新 manifest 会记录 `modelRoleBoundary`，明确 analysisRoute=`vision`、generationRoute=`image`、当前 job 默认不调用 image 生图。
+- 真实验证：
+  - 服务已重启到 `http://127.0.0.1:3498`，PID `35004`。
+  - `/api/model-routes/orchestration` 返回 `visionStage.label="视觉拆层 / 最终质检模型"`，包含“拆层分析到 PSD 重建” handoff。
+  - `/api/psd-rebuild/library?limit=1` 返回真实本机图层库 `count=7`，首项 `status=psd_exported`。
+  - 首页 HTML 已包含“拆层分析模型”和“生图模型只用于后续重绘或补全真实素材”。
+  - `/api/status` 返回 `visionLabel="视觉拆层 / 最终质检模型"`，`psdRebuildLibrary.count=7`，响应未包含 token/key 字符串。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `git grep -n -E 'sk-[A-Za-z0-9]+' -- .` 无结果。
+
 # 2026-04-28 任务 — 拆解图层库与 PSD 重建快捷调用
 
 ## 目标

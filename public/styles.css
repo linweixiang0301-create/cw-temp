@@ -1047,6 +1047,10 @@ button:disabled {
   font-size: 11px;
 }
 
+.field-hint {
+  line-height: 1.35;
+}
+
 .field.wide {
   grid-column: 1 / 2;
 }
