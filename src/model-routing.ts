@@ -38,6 +38,14 @@ type ModelRequestResult = {
   response: unknown;
 };
 
+type ImageRequestResult = ModelRequestResult & {
+  endpointKind: 'images' | 'chat';
+  image: {
+    buffer: Buffer;
+    source: string;
+  };
+};
+
 type ImageGenerationInput = {
   prompt: string;
   modelId?: string;
@@ -464,6 +472,78 @@ async function extractGeneratedImage(payload: unknown): Promise<{ buffer: Buffer
   throw new ModelRouteError('模型响应中没有找到真实图片数据。', { responseShape: Object.keys(objectValue(payload)) }, 502);
 }
 
+async function callImageGenerationModels(
+  route: ResolvedModelRoute,
+  input: ImageGenerationInput,
+): Promise<ImageRequestResult> {
+  if (!route.ready) {
+    throw new ModelRouteError(`${route.label}未就绪。`, { route, findings: route.findings });
+  }
+  const prompt = String(input.prompt || '').trim();
+  const size = input.size || DEFAULT_IMAGE_SIZE;
+  const models = [...new Set([input.modelId, route.primary, route.fallback].map((item) => String(item || '').trim()).filter(Boolean))];
+  const failures: Array<{ model: string; endpointKind: string; error: string }> = [];
+
+  for (const model of models) {
+    const attempts: Array<{ endpointKind: 'images' | 'chat'; endpoint: string; payload: unknown }> = [
+      {
+        endpointKind: 'images',
+        endpoint: endpointFor(route, '/images/generations'),
+        payload: {
+          model,
+          prompt,
+          size,
+          n: 1,
+          response_format: 'b64_json',
+        },
+      },
+      {
+        endpointKind: 'chat',
+        endpoint: endpointFor(route, '/chat/completions'),
+        payload: {
+          model,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: [
+                  prompt,
+                  `Target output size: ${size}.`,
+                  'Return a real generated image. Avoid poster text, logos, QR codes, and watermarks unless explicitly requested.',
+                ].join('\n'),
+              },
+            ],
+          }],
+          max_tokens: 4096,
+        },
+      },
+    ];
+
+    for (const attempt of attempts) {
+      try {
+        const response = await fetchJsonWithTimeout(attempt.endpoint, attempt.payload, headersFor(route));
+        const image = await extractGeneratedImage(response);
+        return {
+          model,
+          route,
+          response,
+          endpointKind: attempt.endpointKind,
+          image,
+        };
+      } catch (error) {
+        failures.push({
+          model,
+          endpointKind: attempt.endpointKind,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  throw new ModelRouteError('主模型与备选模型均未生成可用图片。', { route, failures }, 502);
+}
+
 function sanitizeName(value: string): string {
   const compact = value.replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   return compact || 'generated';
@@ -479,25 +559,15 @@ export async function generateImageArtifact(input: ImageGenerationInput): Promis
   const prompt = String(input.prompt || '').trim();
   if (!prompt) throw new ModelRouteError('生图 prompt 不能为空。');
   const route = getResolvedModelRoute('image');
-  const request = await callModels(route, input.modelId, (model) => ({
-    endpoint: endpointFor(route, '/images/generations'),
-    payload: {
-      model,
-      prompt,
-      size: input.size || DEFAULT_IMAGE_SIZE,
-      n: 1,
-      response_format: 'b64_json',
-    },
-  }));
-  const image = await extractGeneratedImage(request.response);
-  const detected = imageExtension(image.buffer);
+  const request = await callImageGenerationModels(route, input);
+  const detected = imageExtension(request.image.buffer);
   if (!detected) {
-    throw new ModelRouteError('模型返回内容不是受支持的真实图片格式。', { model: request.model, source: image.source }, 502);
+    throw new ModelRouteError('模型返回内容不是受支持的真实图片格式。', { model: request.model, source: request.image.source }, 502);
   }
   const id = crypto.randomUUID();
   const baseName = `${new Date().toISOString().replace(/[:.]/g, '-')}-${sanitizeName(input.slotKey || request.model)}-${id.slice(0, 8)}`;
   const outputPath = path.join(modelArtifactDir('image'), `${baseName}${detected.extension}`);
-  fs.writeFileSync(outputPath, image.buffer);
+  fs.writeFileSync(outputPath, request.image.buffer);
   const metadataPath = path.join(modelArtifactDir('image'), `${baseName}.json`);
   const stat = fs.statSync(outputPath);
   const metadata = {
@@ -516,7 +586,8 @@ export async function generateImageArtifact(input: ImageGenerationInput): Promis
     outputPath,
     sizeBytes: stat.size,
     mime: detected.mime,
-    source: image.source,
+    source: request.image.source,
+    endpointKind: request.endpointKind,
   };
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
   return {

@@ -67,6 +67,14 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `GET /api/feishu/send-history`
 - `POST /api/feishu/preflight-final`
 - `POST /api/feishu/send-final`
+- `GET /api/model-routes`
+- `POST /api/model-routes`
+- `POST /api/model-routes/preflight`
+- `POST /api/model-routes/live-probe`
+- `GET /api/model-routes/usage-history`
+- `POST /api/models/image/generate`
+- `POST /api/models/vision/qa`
+- `GET /api/regression/model-routing`
 
 ## 飞书输出
 
@@ -84,3 +92,27 @@ export PS_AUTOMATION_FEISHU_USER_ID=ou_xxx
 控制台可以把手动填写的真实 Chat/User 目标保存为本地最近目标，数据只写入本机运行时 state，不进入仓库。
 
 每次调用发送接口都会写入本地发送历史：成功记录目标、最终 PNG、投递方式和消息数量；失败记录错误与预检 findings。
+
+## 模型路由
+
+控制台支持 `instruction` / `image` / `vision` 三类模型路由，本机 runtime state 只保存模型名、Base URL、provider 和 API Key 环境变量名，不保存密钥原文。
+
+当前真实 provider 验证过的配置形态：
+
+```text
+image:
+  baseUrl: https://api.tu-zi.com/v1
+  apiKeyEnv: GEMINI_TUZI_API_KEY
+  primary: gemini-3-pro-image-preview-4k
+  fallback: gemini-3-pro-image-preview-vip
+
+vision:
+  baseUrl: https://ai.flashapi.top
+  apiKeyEnv: GEMINI_FLASH_API_KEY
+  primary: gemini-3-flash-preview
+  fallback: gemini-3-pro-preview
+```
+
+`/api/models/image/generate` 会先尝试 OpenAI-compatible `/v1/images/generations`。如果真实 provider 的图像模型走 chat 形态，会再尝试 `/v1/chat/completions` 并从返回的 base64 或图片 URL 提取真实图片字节。只有图片魔数校验通过并落盘到 `~/.codex/ps-automation/model-artifacts/image`，才返回 `generated`。
+
+`/api/models/vision/qa` 使用真实 `final.png` 调用视觉模型；失败时返回 `manual_review`，不会阻断 Photoshop job 或飞书最终 PNG 输出链路。

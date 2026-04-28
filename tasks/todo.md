@@ -1,3 +1,58 @@
+# 2026-04-28 任务 — 真实 image / vision provider 配置与生图验证
+
+## 目标
+- 配置本机真实 image / vision provider，只保存模型名、Base URL 和 API Key 环境变量名，不保存密钥原文。
+- 跑真实 live probe，确认 provider 可连通。
+- 跑真实 image 生图调用：必须拿到真实图片字节并落盘到本机 runtime，失败则记录真实错误，不伪造图片。
+- 跑真实 final.png vision 质检：使用当前真实 `final.png`，质检失败仍不阻断 PS + 飞书主链路。
+
+## 计划
+- [x] 读取当前可用 provider 环境变量和真实 `/v1/models`，确认可用模型。
+- [x] 为 PS 控制台 image 生成补齐 chat/completions 图像模型兼容层。
+- [x] 保存 image 路由到本机 runtime state，并重启服务使环境变量生效。
+- [x] 保存 vision 路由到本机 runtime state，并重启服务使环境变量生效。
+- [x] 执行 live probe、真实 image 生成、真实 final.png vision QA。
+- [x] 运行类型检查、脚本检查、API smoke，并回填本节回顾。
+
+## 回顾
+- 当前 shell 有真实 provider 环境变量：
+  - `GEMINI_FLASH_BASE_URL=https://ai.flashapi.top`
+  - `GEMINI_FLASH_API_KEY` 已存在，但未输出密钥。
+  - `GEMINI_TUZI_API_KEY` 已存在，但未输出密钥。
+- 真实 `/v1/models` 探测：
+  - FlashAPI 返回 3 个模型：`gemini-3.1-pro-preview`、`gemini-3-pro-preview`、`gemini-3-flash-preview`。
+  - 通过控制台 live probe，兔子 image provider 返回 `444` 个模型，并命中 `gemini-3-pro-image-preview-4k` 与 `gemini-3-pro-image-preview-vip`。
+- 代码补齐：
+  - `src/model-routing.ts` 的 image 生成现在支持两种真实 provider 形态：
+    - `/v1/images/generations`
+    - `/v1/chat/completions` 图像模型返回 base64 / 图片 URL
+  - 仍只有拿到真实图片字节、通过 PNG/JPG/WEBP 魔数检查并落盘后，才返回 `generated`。
+- 本机 runtime state 已保存：
+  - image：`https://api.tu-zi.com/v1` + `GEMINI_TUZI_API_KEY` + 主模型 `gemini-3-pro-image-preview-4k` + 备选 `gemini-3-pro-image-preview-vip`。
+  - vision：`https://ai.flashapi.top` + `GEMINI_FLASH_API_KEY` + 主模型 `gemini-3-flash-preview` + 备选 `gemini-3-pro-preview`。
+  - state 只保存环境变量名，不保存密钥原文。
+- 真实 live probe：
+  - image：`ready`，endpoint `https://api.tu-zi.com/v1/models`，`modelCount=444`，matched `gemini-3-pro-image-preview-4k` / `gemini-3-pro-image-preview-vip`。
+  - vision：`ready`，endpoint `https://ai.flashapi.top/v1/models`，`modelCount=3`，matched `gemini-3-flash-preview` / `gemini-3-pro-preview`。
+- 真实 image 生成：
+  - 请求耗时 `53150ms`。
+  - 命中模型 `gemini-3-pro-image-preview-4k`。
+  - 产物：`/Users/a1234/.codex/ps-automation/model-artifacts/image/2026-04-28T06-47-49-283Z-real-provider-smoke-5d1b0ef6.jpg`。
+  - 尺寸 `4096x4096`，大小约 `8.2 MB`，metadata 已落盘。
+- 真实 vision QA：
+  - 输入当前真实 `final.png`：`/Users/a1234/Desktop/飞书Claude/claude-feishu-bridge/.runtime/bridge-state/photoshop-jobs/running/photoshop-be946f18-7e54-497c-9548-483d2ea4c85b/final.png`。
+  - 请求耗时 `14095ms`。
+  - 命中模型 `gemini-3-flash-preview`。
+  - 返回 `completed`，`nonBlocking=true`，摘要判断“可以发飞书”。
+- 验证：
+  - `npm run check` 通过。
+  - `node --check public/app.js` 通过。
+  - `git diff --check` 通过。
+  - `/api/regression/model-routing` 返回 `ready`；provider live probe、fallback policy、vision non-blocking policy、usage audit 全部 ready。
+  - 模型使用审计当前 `6` 条，最新两条为 `vision.qa completed` 和 `image.generate generated`。
+  - Playwright UI 验证通过：模型路由面板显示真实模型、模型使用记录显示 generated，控制台无 error、无横向溢出。截图：`/tmp/ps-console-real-provider-routing-1440.png`。
+  - 飞书发送历史仍为 `2` 条，本轮未新增飞书消息；PSD 仍为 `local_only`。
+
 # 2026-04-28 任务 — 模型路由接入闭环
 
 ## 目标
