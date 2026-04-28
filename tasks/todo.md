@@ -1,3 +1,25 @@
+# 2026-04-28 任务 — 模型路由接入闭环
+
+## 目标
+- 让本地 UI-first PS 自动化控制台支持 instruction / image / vision 三类模型路由的本地配置、预检和 UI 选择。
+- 将 image 模型接入真实生图产物生成：只有真实 provider 成功返回并落盘图片，才允许生成 `image.replace.ai` 动作。
+- 将 vision 模型接入最终 `final.png` 质检：质检失败或未配置时只返回诊断，不阻断 Photoshop job 与飞书最终 PNG 输出主链路。
+- 所有模型失败都回退到当前本地文件/人工路径；不使用 mock 数据，不伪造模型产物，不外发 PSD。
+
+## 计划
+- [x] 扩展本地 runtime state，保存非敏感模型路由配置。
+- [x] 新增模型路由 API：列表、保存、预检。
+- [x] 新增真实 image 生成 API：调用已配置 provider，生成 PNG 落盘，失败返回可人工回退。
+- [x] 新增 final.png vision 质检 API：调用已配置 provider 返回诊断，失败不阻断发送链路。
+- [x] UI 增加模型路由配置面板和 instruction / image / vision 下拉选择。
+- [x] UI 的 AI 图片替换从“手动填生成文件”升级为可触发真实生成，成功后回填本地文件并加入 action。
+- [x] Artifact / 飞书工作台增加 final.png 质检入口与结果展示。
+- [x] 运行类型检查、脚本检查、真实 API 验证和浏览器 UI 验证。
+- [ ] 远端冷启动回归并推送 GitHub。
+
+## 回顾
+- 待完成。
+
 # 2026-04-28 任务 — 飞书发送后状态回执优化
 
 ## 目标

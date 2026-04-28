@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { DEFAULT_HOST, DEFAULT_PORT, MANIFEST_DISCOVERY_ROOTS, PUBLIC_DIR, ensureRuntimeDirs, getModelRoutingStatus } from './config.js';
+import { DEFAULT_HOST, DEFAULT_PORT, MANIFEST_DISCOVERY_ROOTS, PUBLIC_DIR, ensureRuntimeDirs } from './config.js';
 import { Design006BrowserManager } from './design006-browser-manager.js';
 import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './feishu-output.js';
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
+import { generateImageArtifact, getResolvedModelRoute, getResolvedModelRoutes, runVisionQualityCheck } from './model-routing.js';
 import {
   confirmFinalExport,
   getPhotoshopJobArtifactCenter,
@@ -20,6 +21,7 @@ import {
   deleteFeishuTarget,
   deletePreset,
   listFeishuSendHistory,
+  listModelRoutes,
   listFeishuTargets,
   listDerivedTargets,
   listDownloads,
@@ -29,8 +31,11 @@ import {
   markDerivedTargetLoaded,
   saveDerivedTarget,
   saveFeishuTarget,
+  saveModelRoute,
   savePreset,
   type ActionPresetRecord,
+  type ModelRouteKey,
+  type ModelRouteProvider,
 } from './state.js';
 import {
   inspectTemplateManifest,
@@ -223,6 +228,14 @@ function isSlotCapability(value: string): value is SlotCapability {
 
 function isFeishuTargetType(value: string): value is 'chat' | 'user' {
   return value === 'chat' || value === 'user';
+}
+
+function isModelRouteKey(value: string): value is ModelRouteKey {
+  return value === 'instruction' || value === 'image' || value === 'vision';
+}
+
+function isModelRouteProvider(value: string): value is ModelRouteProvider {
+  return value === 'openai-compatible';
 }
 
 function feishuTargetLooksValid(type: 'chat' | 'user', value: string): boolean {
@@ -806,7 +819,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         design006: design006.status(),
         photoshop: await getPhotoshopStatus(),
         feishu: await getFeishuStatus(),
-        models: getModelRoutingStatus(),
+        models: getResolvedModelRoutes(),
         downloads: listDownloads(),
         jobs: listJobs(),
         presets: listPresets(),
@@ -814,6 +827,125 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         feishuTargets: listFeishuTargets(),
         feishuSendHistory: listFeishuSendHistory(),
       });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/model-routes') {
+      sendJson(res, 200, {
+        ok: true,
+        routes: getResolvedModelRoutes(),
+        savedRoutes: listModelRoutes(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/model-routes') {
+      const body = await readJsonBody<{
+        key?: string;
+        provider?: string;
+        primary?: string;
+        fallback?: string | null;
+        source?: string | null;
+        baseUrl?: string | null;
+        apiKeyEnv?: string | null;
+        enabled?: boolean;
+      }>(req);
+      const key = String(body.key || '').trim();
+      const provider = String(body.provider || 'openai-compatible').trim();
+      const primary = String(body.primary || '').trim();
+      if (!isModelRouteKey(key)) throw badRequest('模型路由 key 必须是 instruction、image 或 vision。');
+      if (!isModelRouteProvider(provider)) throw badRequest('当前只支持 openai-compatible provider。');
+      if (!primary) throw badRequest('模型主路由不能为空。');
+      const route = saveModelRoute({
+        key,
+        provider,
+        primary,
+        fallback: body.fallback,
+        source: body.source,
+        baseUrl: body.baseUrl,
+        apiKeyEnv: body.apiKeyEnv,
+        enabled: body.enabled !== false,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        route,
+        routes: getResolvedModelRoutes(),
+        savedRoutes: listModelRoutes(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/model-routes/preflight') {
+      sendJson(res, 200, {
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        routes: getResolvedModelRoutes(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/models/image/generate') {
+      const body = await readJsonBody<{
+        prompt?: string;
+        modelId?: string;
+        size?: string;
+        slotKey?: string;
+      }>(req);
+      if (!String(body.prompt || '').trim()) throw badRequest('生图 prompt 不能为空。');
+      try {
+        sendJson(res, 200, {
+          ok: true,
+          ...(await generateImageArtifact({
+            prompt: String(body.prompt || '').trim(),
+            modelId: String(body.modelId || '').trim(),
+            size: String(body.size || '').trim(),
+            slotKey: String(body.slotKey || '').trim(),
+          })),
+        });
+      } catch (error) {
+        sendJson(res, 200, {
+          ok: true,
+          status: 'fallback',
+          fallback: {
+            mode: 'manual_file',
+            reason: safeError(error),
+            route: getResolvedModelRoute('image'),
+            details: errorDetails(error) || null,
+          },
+        });
+      }
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/models/vision/qa') {
+      const body = await readJsonBody<{
+        imagePath?: string;
+        modelId?: string;
+        prompt?: string;
+      }>(req);
+      if (!String(body.imagePath || '').trim()) throw badRequest('缺少要质检的 final.png 路径。');
+      try {
+        sendJson(res, 200, {
+          ok: true,
+          ...(await runVisionQualityCheck({
+            imagePath: String(body.imagePath || '').trim(),
+            modelId: String(body.modelId || '').trim(),
+            prompt: String(body.prompt || '').trim(),
+          })),
+        });
+      } catch (error) {
+        sendJson(res, 200, {
+          ok: true,
+          status: 'fallback',
+          fallback: {
+            mode: 'manual_review',
+            reason: safeError(error),
+            route: getResolvedModelRoute('vision'),
+            details: errorDetails(error) || null,
+            nonBlocking: true,
+          },
+        });
+      }
       return true;
     }
 

@@ -8,6 +8,10 @@ const state = {
   derivedTargets: [],
   feishuTargets: [],
   feishuSendHistory: [],
+  modelRoutes: [],
+  modelRouteConfigKey: 'image',
+  lastModelPreflight: null,
+  lastVisionQa: null,
   expandedSendHistoryId: '',
   lastFeishuPreflight: null,
   latestFinalJob: null,
@@ -111,6 +115,7 @@ function renderStatus(payload) {
   state.derivedTargets = Array.isArray(payload.derivedTargets) ? payload.derivedTargets : [];
   state.feishuTargets = Array.isArray(payload.feishuTargets) ? payload.feishuTargets : [];
   state.feishuSendHistory = Array.isArray(payload.feishuSendHistory) ? payload.feishuSendHistory : [];
+  state.modelRoutes = Array.isArray(payload.models) ? payload.models : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -157,20 +162,198 @@ function renderFeishuDefaultStatus(feishu) {
   `;
 }
 
+const MODEL_ROUTE_KEYS = [
+  ['instruction', '指令解析'],
+  ['image', '生图 / 图生图'],
+  ['vision', '最终质检'],
+];
+
+function modelRoute(key) {
+  return (state.modelRoutes || state.status?.models || []).find((item) => item.key === key) || null;
+}
+
+function modelRouteModels(key) {
+  const route = modelRoute(key);
+  if (!route?.configured) return [];
+  return [...new Set([...(route.models || []), route.primary, route.fallback].map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function modelOptionsForRouteHtml(key, selectedModel = '', emptyLabel = '未配置') {
+  const options = modelRouteModels(key);
+  if (options.length === 0) return `<option value="">${escapeHtml(emptyLabel)}</option>`;
+  return options.map((value) => (
+    `<option value="${escapeHtml(value)}" ${value === selectedModel ? 'selected' : ''}>${escapeHtml(value)}</option>`
+  )).join('');
+}
+
+function routeTone(route) {
+  if (!route?.configured) return 'blocked';
+  if (!route.ready) return 'warning';
+  return 'ready';
+}
+
+function routeFindingHtml(route) {
+  const findings = Array.isArray(route?.findings) ? route.findings : [];
+  if (findings.length === 0) return '';
+  return `<div class="model-route-findings">${findings.map((item) => (
+    `<div class="issue ${item.severity === 'error' ? 'err' : 'warn'}"><b>${escapeHtml(item.code)}</b>${escapeHtml(item.message)}</div>`
+  )).join('')}</div>`;
+}
+
+function modelRouteConfigRoute() {
+  return modelRoute(state.modelRouteConfigKey) || { key: state.modelRouteConfigKey, provider: 'openai-compatible' };
+}
+
+function renderModelRouteSelects() {
+  return `
+    <div class="model-route-select-grid">
+      ${MODEL_ROUTE_KEYS.map(([key, label]) => `
+        <label class="field tight">
+          <span>${escapeHtml(label)}</span>
+          <select id="${escapeHtml(key)}ModelSelect">${modelOptionsForRouteHtml(key)}</select>
+        </label>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderModelRouteConfigForm() {
+  const route = modelRouteConfigRoute();
+  return `
+    <details class="model-route-config" open>
+      <summary>本地配置</summary>
+      ${renderModelRouteSelects()}
+      <label class="field tight">
+        <span>路由</span>
+        <select id="modelRouteConfigKey">
+          ${MODEL_ROUTE_KEYS.map(([key, label]) => `<option value="${escapeHtml(key)}" ${state.modelRouteConfigKey === key ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field tight">
+        <span>Provider</span>
+        <select id="modelRouteProvider">
+          <option value="openai-compatible" ${route.provider === 'openai-compatible' || !route.provider ? 'selected' : ''}>openai-compatible</option>
+        </select>
+      </label>
+      <label class="field tight">
+        <span>主模型</span>
+        <input id="modelRoutePrimary" value="${escapeHtml(route.primary || '')}" placeholder="例如 gpt-image-1">
+      </label>
+      <label class="field tight">
+        <span>备选模型</span>
+        <input id="modelRouteFallback" value="${escapeHtml(route.fallback || '')}" placeholder="可留空">
+      </label>
+      <label class="field tight">
+        <span>Base URL</span>
+        <input id="modelRouteBaseUrl" value="${escapeHtml(route.baseUrl || '')}" placeholder="http://127.0.0.1:11434/v1">
+      </label>
+      <label class="field tight">
+        <span>API Key Env</span>
+        <input id="modelRouteApiKeyEnv" value="${escapeHtml(route.apiKeyEnv || '')}" placeholder="OPENAI_API_KEY">
+      </label>
+      <label class="field tight">
+        <span>来源备注</span>
+        <input id="modelRouteSource" value="${escapeHtml(route.source || '')}" placeholder="local / openai / lmstudio">
+      </label>
+      <label class="check-row">
+        <input id="modelRouteEnabled" type="checkbox" ${route.enabled === false ? '' : 'checked'}>
+        <span>启用</span>
+      </label>
+      <div class="button-row stretch model-route-buttons">
+        <button id="saveModelRouteBtn" type="button" class="secondary">保存路由</button>
+        <button id="preflightModelRoutesBtn" type="button" class="secondary">预检模型</button>
+      </div>
+      <div id="modelRouteResults" class="model-route-results"></div>
+    </details>
+  `;
+}
+
+function bindModelRouteControls() {
+  $('modelRouteConfigKey')?.addEventListener('change', () => {
+    state.modelRouteConfigKey = $('modelRouteConfigKey').value || 'image';
+    renderModelRoutes(state.modelRoutes);
+  });
+  $('saveModelRouteBtn')?.addEventListener('click', () => saveModelRouteConfig().catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
+  $('preflightModelRoutesBtn')?.addEventListener('click', () => preflightModelRoutes().catch((error) => {
+    setMessage('modelRouteResults', error.payload || error.message);
+  }));
+}
+
 function renderModelRoutes(models) {
+  state.modelRoutes = Array.isArray(models) ? models : [];
   if (!Array.isArray(models) || models.length === 0) {
     $('modelRoutes').innerHTML = '<div class="muted">未读取到模型配置。</div>';
     return;
   }
-  $('modelRoutes').innerHTML = models.map((route) => `
-    <div class="model-route">
-      <div>
-        <strong>${escapeHtml(route.label)}</strong>
-        <span>${route.configured ? escapeHtml(route.primary) : '未配置'}</span>
+  $('modelRoutes').innerHTML = [
+    ...models.map((route) => `
+      <div class="model-route ${routeTone(route)}">
+        <div>
+          <strong>${escapeHtml(route.label)}</strong>
+          <span>${route.configured ? escapeHtml(route.primary) : '未配置'}</span>
+        </div>
+        <small>备选 ${escapeHtml(route.fallback || '未选择')} · 来源 ${escapeHtml(route.sourceKind || route.source || '-')}</small>
+        <small>${escapeHtml(route.provider || '-')} · ${escapeHtml(route.baseUrl || 'Base URL 未设')}</small>
+        ${routeFindingHtml(route)}
       </div>
-      <small>备选 ${escapeHtml(route.fallback || '未选择')} · 来源 ${escapeHtml(route.source || '-')}</small>
+    `),
+    renderModelRouteConfigForm(),
+  ].join('');
+  bindModelRouteControls();
+}
+
+async function refreshModelRoutes() {
+  const payload = await api('/api/model-routes');
+  state.modelRoutes = Array.isArray(payload.routes) ? payload.routes : [];
+  renderModelRoutes(state.modelRoutes);
+  renderSlotDetail();
+  renderTemplatePreview();
+  return state.modelRoutes;
+}
+
+async function saveModelRouteConfig() {
+  const payload = await api('/api/model-routes', {
+    method: 'POST',
+    body: JSON.stringify({
+      key: $('modelRouteConfigKey').value,
+      provider: $('modelRouteProvider').value,
+      primary: $('modelRoutePrimary').value.trim(),
+      fallback: $('modelRouteFallback').value.trim(),
+      source: $('modelRouteSource').value.trim(),
+      baseUrl: $('modelRouteBaseUrl').value.trim(),
+      apiKeyEnv: $('modelRouteApiKeyEnv').value.trim(),
+      enabled: $('modelRouteEnabled').checked,
+    }),
+  });
+  state.modelRoutes = Array.isArray(payload.routes) ? payload.routes : [];
+  renderModelRoutes(state.modelRoutes);
+  renderSlotDetail();
+  renderTemplatePreview();
+  setMessage('modelRouteResults', `
+    <div class="preflight-status ready">
+      <strong>模型路由已保存</strong>
+      <span>${escapeHtml(payload.route?.key || '')} · ${escapeHtml(payload.route?.primary || '')}</span>
+    </div>
+  `, 'html');
+  return payload;
+}
+
+async function preflightModelRoutes() {
+  const payload = await api('/api/model-routes/preflight', { method: 'POST', body: '{}' });
+  state.lastModelPreflight = payload;
+  state.modelRoutes = Array.isArray(payload.routes) ? payload.routes : [];
+  renderModelRoutes(state.modelRoutes);
+  const rows = state.modelRoutes.map((route) => `
+    <div class="model-route ${routeTone(route)}">
+      <strong>${escapeHtml(route.label)}</strong>
+      <span>${escapeHtml(route.ready ? 'ready' : route.configured ? 'blocked' : 'not_configured')}</span>
+      ${routeFindingHtml(route)}
     </div>
   `).join('');
+  setMessage('modelRouteResults', rows || '<div class="muted">没有模型路由。</div>', 'html');
+  return payload;
 }
 
 function renderCandidates(candidates) {
@@ -525,12 +708,7 @@ function guidePosition(slot, zoom, canvasWidth, canvasHeight) {
 }
 
 function modelOptionsHtml(selectedModel = '') {
-  const model = (state.status?.models || []).find((item) => item.key === 'image');
-  if (!model?.configured || !model.primary) return '<option value="">未配置</option>';
-  const options = [model.primary, model.fallback].filter(Boolean);
-  return [...new Set(options)].map((value) => (
-    `<option value="${escapeHtml(value)}" ${value === selectedModel ? 'selected' : ''}>${escapeHtml(value)}</option>`
-  )).join('');
+  return modelOptionsForRouteHtml('image', selectedModel, '未配置');
 }
 
 function batchSlots() {
@@ -648,6 +826,7 @@ function renderCanvasGuide(slot, zoom, canvasWidth, canvasHeight) {
             </label>
           </div>
           <button type="button" class="secondary" data-guide-action="image-ai">加入 AI 文件替换</button>
+          <button type="button" class="secondary" data-guide-action="image-ai-generate">生成并回填</button>
         </details>
       ` : ''}
     </div>
@@ -776,6 +955,36 @@ function syncBatchDraft() {
   if ($('batchRotateDeg')) state.batchDraft.rotateDeg = $('batchRotateDeg').value;
 }
 
+async function generateImageForCanvasSlot(slot) {
+  const draft = syncCanvasDraft(slot);
+  if (!draft.aiPrompt.trim()) {
+    setMessage('preflightResults', '<div class="issue err"><b>prompt_missing</b>请先填写真实生图 prompt。</div>', 'html');
+    return null;
+  }
+  const button = document.querySelector('[data-guide-action="image-ai-generate"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '生成中...';
+  }
+  try {
+    const payload = await requestImageGeneration({
+      prompt: draft.aiPrompt.trim(),
+      modelId: draft.modelId.trim(),
+      slotKey: slot.key,
+    });
+    if (payload.status === 'generated' && payload.artifact?.outputPath) {
+      draft.aiOutputPath = payload.artifact.outputPath;
+      renderTemplatePreview();
+    }
+    return payload;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '生成并回填';
+    }
+  }
+}
+
 function bindBatchGuide() {
   const guide = document.querySelector('[data-batch-guide]');
   if (!guide) return;
@@ -853,6 +1062,10 @@ function bindCanvasGuide() {
           sourcePath: draft.aiOutputPath.trim(),
           prompt: draft.aiPrompt.trim(),
           modelId: draft.modelId.trim(),
+        });
+      } else if (action === 'image-ai-generate') {
+        generateImageForCanvasSlot(slot).catch((error) => {
+          setMessage('preflightResults', error.payload || error.message);
         });
       } else if (action === 'transform') {
         addAction({
@@ -957,10 +1170,8 @@ function renderSlotDetail() {
     ['Bounds Source', sourceLabel],
     ['Max Chars', slot.maxChars ?? '-'],
   ];
-  const model = (state.status?.models || []).find((item) => item.key === 'image');
-  const modelOptions = model?.configured && model.primary
-    ? `<option value="${escapeHtml(model.primary)}">${escapeHtml(model.primary)}</option>`
-    : '<option value="">未配置</option>';
+  const model = modelRoute('image');
+  const modelOptions = modelOptionsForRouteHtml('image');
   const modelHint = model?.configured
     ? `主模型 ${model.primary}${model.fallback ? ` · 备选 ${model.fallback}` : ''}`
     : '未配置生图模型；AI 替换必须先生成真实文件后才能提交。';
@@ -1020,6 +1231,7 @@ function renderSlotDetail() {
         </label>
         <p class="hint">${escapeHtml(modelHint)}</p>
         <div class="button-row">
+          <button id="generateImageBtn" type="button" class="secondary">生成图片并回填</button>
           <button id="addImageLocalBtn" type="button">加入本地替换</button>
           <button id="addImageAiBtn" type="button" class="secondary">加入 AI 生成替换</button>
         </div>
@@ -1061,6 +1273,9 @@ function renderSlotDetail() {
     slotKey: slot.key,
     sourcePath: $('imageSourcePath').value.trim(),
   }));
+  $('generateImageBtn')?.addEventListener('click', () => generateImageForSelectedSlot(slot).catch((error) => {
+    setMessage('preflightResults', error.payload || error.message);
+  }));
   $('addImageAiBtn')?.addEventListener('click', () => addAction({
     type: 'image.replace.ai',
     slotKey: slot.key,
@@ -1082,6 +1297,69 @@ function renderSlotDetail() {
     type: 'layer.hide',
     slotKey: slot.key,
   }));
+}
+
+function renderImageGenerationResult(payload, targetId = 'preflightResults') {
+  if (payload?.status === 'generated') {
+    const artifact = payload.artifact || {};
+    setMessage(targetId, `
+      <div class="preflight-status ready">
+        <strong>真实图片已生成</strong>
+        <span>${escapeHtml(artifact.model || '-')} · ${escapeHtml(formatBytes(artifact.sizeBytes))}</span>
+      </div>
+      <div class="artifact-list">
+        <div><strong>文件</strong><span>${escapeHtml(artifact.outputPath || '-')}</span></div>
+        <div><strong>元数据</strong><span>${escapeHtml(artifact.metadataPath || '-')}</span></div>
+      </div>
+    `, 'html');
+    return;
+  }
+  const fallback = payload?.fallback || {};
+  setMessage(targetId, `
+    <div class="preflight-status blocked">
+      <strong>模型生成未完成，已回退人工文件路径</strong>
+      <span>${escapeHtml(fallback.reason || '模型未返回真实图片。')}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>回退方式</strong><span>${escapeHtml(fallback.mode || 'manual_file')}</span></div>
+      <div><strong>主链路</strong><span>不阻断 Photoshop / 飞书输出</span></div>
+    </div>
+  `, 'html');
+}
+
+async function requestImageGeneration({ prompt, modelId, slotKey, resultId = 'preflightResults' }) {
+  const payload = await api('/api/models/image/generate', {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt,
+      modelId,
+      slotKey,
+      size: '1024x1024',
+    }),
+  });
+  renderImageGenerationResult(payload, resultId);
+  return payload;
+}
+
+async function generateImageForSelectedSlot(slot) {
+  const prompt = $('imagePrompt')?.value?.trim() || '';
+  const modelId = $('imageModel')?.value?.trim() || '';
+  if (!prompt) {
+    setMessage('preflightResults', '<div class="issue err"><b>prompt_missing</b>请先填写真实生图 prompt。</div>', 'html');
+    return null;
+  }
+  $('generateImageBtn').disabled = true;
+  $('generateImageBtn').textContent = '生成中...';
+  try {
+    const payload = await requestImageGeneration({ prompt, modelId, slotKey: slot.key });
+    if (payload.status === 'generated' && payload.artifact?.outputPath) {
+      $('imageSourcePath').value = payload.artifact.outputPath;
+    }
+    return payload;
+  } finally {
+    $('generateImageBtn').disabled = false;
+    $('generateImageBtn').textContent = '生成图片并回填';
+  }
 }
 
 function readNumber(id) {
@@ -2080,6 +2358,25 @@ function renderFinalPreview() {
   `;
 }
 
+function renderVisionQaControls() {
+  const select = $('visionQaModel');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = modelOptionsForRouteHtml('vision', current, '未配置');
+  if (current && modelRouteModels('vision').includes(current)) select.value = current;
+  const button = $('runVisionQaBtn');
+  if (button) {
+    const hasFinal = Boolean($('finalImagePath')?.value?.trim());
+    const route = modelRoute('vision');
+    button.disabled = !hasFinal || !route?.ready;
+    button.title = !hasFinal
+      ? '缺少 final.png'
+      : route?.ready
+        ? '运行非阻断最终质检'
+        : '质检模型未就绪';
+  }
+}
+
 function renderFeishuReadyWorkbench(readiness) {
   const el = $('feishuReadyWorkbench');
   if (!el) return;
@@ -2139,6 +2436,7 @@ function renderFeishuReadiness() {
     resendButton.disabled = !readiness.duplicateSend;
   }
   renderFinalPreview();
+  renderVisionQaControls();
   renderFeishuReadyWorkbench(readiness);
   return readiness;
 }
@@ -2860,6 +3158,65 @@ function renderFeishuSendError(error) {
   });
 }
 
+function renderVisionQaResult(payload) {
+  state.lastVisionQa = payload;
+  if (payload?.status === 'completed') {
+    const qa = payload.qa || {};
+    setMessage('visionQaResults', `
+      <div class="job-status ready">
+        <strong>最终 PNG 质检完成</strong>
+        <span>${escapeHtml(qa.model || '-')} · ${escapeHtml(formatLocalDateTime(qa.checkedAt))}</span>
+      </div>
+      <div class="artifact-list">
+        <div><strong>图片</strong><span>${escapeHtml(qa.imagePath || '-')}</span></div>
+        <div><strong>阻断策略</strong><span>${qa.nonBlocking ? '不阻断 Photoshop / 飞书主链路' : '仅诊断'}</span></div>
+      </div>
+      <pre>${escapeHtml(qa.summary || '')}</pre>
+    `, 'html');
+    return;
+  }
+  const fallback = payload?.fallback || {};
+  setMessage('visionQaResults', `
+    <div class="job-status running">
+      <strong>质检模型未完成，已回退人工复核</strong>
+      <span>${escapeHtml(fallback.reason || '模型未就绪或调用失败。')}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>回退方式</strong><span>${escapeHtml(fallback.mode || 'manual_review')}</span></div>
+      <div><strong>阻断策略</strong><span>不阻断 Photoshop / 飞书主链路</span></div>
+    </div>
+  `, 'html');
+}
+
+async function runVisionQa() {
+  const imagePath = $('finalImagePath')?.value?.trim() || '';
+  if (!imagePath) {
+    setMessage('visionQaResults', '<div class="issue err"><b>final_png_missing</b>请先回填 final.png。</div>', 'html');
+    return null;
+  }
+  const button = $('runVisionQaBtn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '质检中...';
+  }
+  try {
+    const payload = await api('/api/models/vision/qa', {
+      method: 'POST',
+      body: JSON.stringify({
+        imagePath,
+        modelId: $('visionQaModel')?.value?.trim() || '',
+      }),
+    });
+    renderVisionQaResult(payload);
+    return payload;
+  } finally {
+    if (button) {
+      button.textContent = '质检 final.png';
+      renderVisionQaControls();
+    }
+  }
+}
+
 async function preflightFeishu() {
   const payload = await api('/api/feishu/preflight-final', {
     method: 'POST',
@@ -3221,6 +3578,14 @@ $('feishuUserId').addEventListener('input', () => {
 
 $('finalImagePath').addEventListener('input', () => {
   renderFeishuReadiness();
+});
+
+$('runVisionQaBtn').addEventListener('click', async () => {
+  try {
+    await runVisionQa();
+  } catch (error) {
+    setMessage('visionQaResults', error.payload || error.message);
+  }
 });
 
 $('saveFeishuTargetBtn').addEventListener('click', async () => {

@@ -281,6 +281,14 @@
           </label>
           <div id="latestFinalStatus" class="target-status"></div>
           <div id="finalPreviewPanel" class="final-preview-panel"></div>
+          <div class="vision-qa-panel">
+            <label class="field">
+              <span>质检模型</span>
+              <select id="visionQaModel"></select>
+            </label>
+            <button id="runVisionQaBtn" type="button" class="secondary">质检 final.png</button>
+          </div>
+          <div id="visionQaResults" class="message-box dark result-log" data-label="最终质检"></div>
           <div id="feishuReadinessStatus" class="target-status"></div>
           <div id="feishuReadyWorkbench" class="message-box dark result-log" data-label="可发送工作台"></div>
           <div class="button-row stretch feishu-actions">
@@ -300,6 +308,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=artifact-center-phase" type="module"></script>
+    <script src="/app.js?v=model-routing-phase" type="module"></script>
   </body>
 </html>

@@ -110,6 +110,23 @@ export type FeishuSendRecord = {
   psdDelivery: 'local_only';
 };
 
+export type ModelRouteKey = 'instruction' | 'image' | 'vision';
+
+export type ModelRouteProvider = 'openai-compatible';
+
+export type ModelRouteRecord = {
+  key: ModelRouteKey;
+  provider: ModelRouteProvider;
+  primary: string;
+  fallback?: string | null;
+  source?: string | null;
+  baseUrl?: string | null;
+  apiKeyEnv?: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type StateShape = {
   downloads: DownloadRecord[];
   jobs: ConsoleJobRecord[];
@@ -117,6 +134,7 @@ type StateShape = {
   derivedTargets: DerivedTargetRecord[];
   feishuTargets: FeishuTargetRecord[];
   feishuSendHistory: FeishuSendRecord[];
+  modelRoutes: ModelRouteRecord[];
 };
 
 const STATE_PATH = runtimePath('console-state.json');
@@ -129,6 +147,7 @@ function emptyState(): StateShape {
     derivedTargets: [],
     feishuTargets: [],
     feishuSendHistory: [],
+    modelRoutes: [],
   };
 }
 
@@ -140,6 +159,7 @@ function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape
     derivedTargets: Array.isArray(raw?.derivedTargets) ? raw.derivedTargets : [],
     feishuTargets: Array.isArray(raw?.feishuTargets) ? raw.feishuTargets : [],
     feishuSendHistory: Array.isArray(raw?.feishuSendHistory) ? raw.feishuSendHistory : [],
+    modelRoutes: Array.isArray(raw?.modelRoutes) ? raw.modelRoutes : [],
   };
 }
 
@@ -376,4 +396,75 @@ export function addFeishuSendRecord(input: Omit<FeishuSendRecord, 'id' | 'create
   state.feishuSendHistory = [record, ...state.feishuSendHistory].slice(0, 100);
   writeState(state);
   return record;
+}
+
+function isModelRouteKey(value: string): value is ModelRouteKey {
+  return value === 'instruction' || value === 'image' || value === 'vision';
+}
+
+function isModelRouteProvider(value: string): value is ModelRouteProvider {
+  return value === 'openai-compatible';
+}
+
+function normalizeModelRoute(record: ModelRouteRecord): ModelRouteRecord | null {
+  const key = String(record.key || '').trim();
+  const provider = String(record.provider || 'openai-compatible').trim();
+  const primary = String(record.primary || '').trim();
+  if (!isModelRouteKey(key) || !isModelRouteProvider(provider) || !primary) return null;
+  const now = new Date().toISOString();
+  return {
+    key,
+    provider,
+    primary,
+    fallback: record.fallback ? String(record.fallback).trim() : null,
+    source: record.source ? String(record.source).trim() : null,
+    baseUrl: record.baseUrl ? String(record.baseUrl).trim() : null,
+    apiKeyEnv: record.apiKeyEnv ? String(record.apiKeyEnv).trim() : null,
+    enabled: record.enabled !== false,
+    createdAt: record.createdAt || now,
+    updatedAt: record.updatedAt || now,
+  };
+}
+
+export function listModelRoutes(): ModelRouteRecord[] {
+  return readState().modelRoutes
+    .map((record) => normalizeModelRoute(record))
+    .filter((record): record is ModelRouteRecord => Boolean(record));
+}
+
+export function saveModelRoute(input: {
+  key: ModelRouteKey;
+  provider?: ModelRouteProvider;
+  primary: string;
+  fallback?: string | null;
+  source?: string | null;
+  baseUrl?: string | null;
+  apiKeyEnv?: string | null;
+  enabled?: boolean;
+}): ModelRouteRecord {
+  const primary = input.primary.trim();
+  if (!primary) throw new Error('模型主路由不能为空。');
+  const state = readState();
+  const now = new Date().toISOString();
+  const existing = state.modelRoutes.find((route) => route.key === input.key);
+  const record: ModelRouteRecord = {
+    key: input.key,
+    provider: input.provider || 'openai-compatible',
+    primary,
+    fallback: input.fallback?.trim() || null,
+    source: input.source?.trim() || null,
+    baseUrl: input.baseUrl?.trim() || null,
+    apiKeyEnv: input.apiKeyEnv?.trim() || null,
+    enabled: input.enabled !== false,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+  const normalized = normalizeModelRoute(record);
+  if (!normalized) throw new Error('模型路由配置无效。');
+  state.modelRoutes = [
+    normalized,
+    ...state.modelRoutes.filter((route) => route.key !== input.key),
+  ].slice(0, 10);
+  writeState(state);
+  return normalized;
 }

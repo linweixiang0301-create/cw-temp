@@ -282,7 +282,21 @@ button:disabled {
   background: var(--soft);
   border: 1px solid #e8edf5;
   border-radius: 7px;
+  display: grid;
+  gap: 5px;
   padding: 9px;
+}
+
+.model-route.ready {
+  border-left: 3px solid var(--green);
+}
+
+.model-route.warning {
+  border-left: 3px solid var(--amber);
+}
+
+.model-route.blocked {
+  border-left: 3px solid var(--red);
 }
 
 .model-route strong,
@@ -301,6 +315,64 @@ button:disabled {
   font-family: var(--mono);
   font-size: 11px;
   margin-top: 3px;
+}
+
+.model-route-config {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+}
+
+.model-route-config summary {
+  color: #344054;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.model-route-config[open] {
+  display: grid;
+}
+
+.model-route-select-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.model-route-buttons {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-route-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.model-route-findings {
+  display: grid;
+  gap: 5px;
+}
+
+.check-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.check-row input {
+  min-height: auto;
+  width: auto;
+}
+
+.vision-qa-panel {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 8px 0;
 }
 
 .main-panel {
@@ -2178,6 +2250,10 @@ pre {
   .artifact-center-card,
   .button-row.stretch.artifact-actions,
   .button-row.stretch.artifact-actions.secondary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .vision-qa-panel {
     grid-template-columns: 1fr;
   }
 
