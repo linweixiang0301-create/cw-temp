@@ -5,6 +5,7 @@ import { DEFAULT_HOST, DEFAULT_PORT, MANIFEST_DISCOVERY_ROOTS, PUBLIC_DIR, ensur
 import { Design006BrowserManager } from './design006-browser-manager.js';
 import { getFeishuStatus, preflightFinalToFeishu, sendFinalToFeishu } from './feishu-output.js';
 import { readJsonBody, sendFile, sendJson, sendText } from './http.js';
+import { handleImageUpload } from './image-upload.js';
 import { generateImageArtifact, getModelRouteOrchestration, getResolvedModelRoute, getResolvedModelRoutes, probeModelRoutes, runVisionQualityCheck } from './model-routing.js';
 import {
   confirmFinalExport,
@@ -15,6 +16,7 @@ import {
   getPhotoshopStatus,
   preflightPhotoshopJob,
 } from './photoshop-service.js';
+import { createPsdRebuildJob } from './psd-rebuild-service.js';
 import {
   addFeishuSendRecord,
   addModelUsageRecord,
@@ -22,8 +24,10 @@ import {
   deleteFeishuTarget,
   deletePreset,
   listFeishuSendHistory,
+  listImageUploads,
   listModelUsageHistory,
   listModelRoutes,
+  listPsdRebuildJobs,
   listFeishuTargets,
   listDerivedTargets,
   listDownloads,
@@ -1178,6 +1182,55 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         feishuTargets: listFeishuTargets(),
         feishuSendHistory: listFeishuSendHistory(),
         modelUsageHistory: listModelUsageHistory(),
+        imageUploads: listImageUploads(),
+        psdRebuildJobs: listPsdRebuildJobs(),
+      });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/uploads/images') {
+      sendJson(res, 200, {
+        ok: true,
+        uploads: listImageUploads(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/uploads/images') {
+      const upload = await handleImageUpload(req);
+      sendJson(res, 200, {
+        ok: true,
+        upload,
+        uploads: listImageUploads(),
+      });
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/psd-rebuild/jobs') {
+      sendJson(res, 200, {
+        ok: true,
+        jobs: listPsdRebuildJobs(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/psd-rebuild/jobs') {
+      const body = await readJsonBody<{
+        uploadId?: string;
+        imagePath?: string;
+        modelId?: string;
+        prompt?: string;
+        executePhotoshop?: boolean;
+      }>(req);
+      sendJson(res, 200, {
+        ...(await createPsdRebuildJob({
+          uploadId: String(body.uploadId || '').trim(),
+          imagePath: String(body.imagePath || '').trim(),
+          modelId: String(body.modelId || '').trim(),
+          prompt: String(body.prompt || '').trim(),
+          executePhotoshop: body.executePhotoshop === true,
+        })),
+        jobs: listPsdRebuildJobs(),
       });
       return true;
     }

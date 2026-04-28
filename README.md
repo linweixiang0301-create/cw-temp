@@ -80,6 +80,10 @@ export PS_AUTOMATION_MANIFEST_ROOTS="$HOME/Desktop,$HOME/Documents"
 - `GET /api/feishu/send-history/export`
 - `POST /api/feishu/preflight-final`
 - `POST /api/feishu/send-final`
+- `GET /api/uploads/images`
+- `POST /api/uploads/images`
+- `GET /api/psd-rebuild/jobs`
+- `POST /api/psd-rebuild/jobs`
 - `GET /api/model-routes`
 - `POST /api/model-routes`
 - `POST /api/model-routes/preflight`
@@ -158,3 +162,14 @@ gpt-5.5=GPT55_FLASH_API_KEY
 `/api/models/image/generate` 会先尝试 OpenAI-compatible `/v1/images/generations`。如果真实 provider 的图像模型走 chat 形态，会再尝试 `/v1/chat/completions` 并从返回的 base64 或图片 URL 提取真实图片字节。只有图片魔数校验通过并落盘到 `~/.codex/ps-automation/model-artifacts/image`，才返回 `generated`。
 
 `/api/models/vision/qa` 使用真实 `final.png` 调用视觉模型；失败时返回 `manual_review`，不会阻断 Photoshop job 或飞书最终 PNG 输出链路。
+
+## 智能拆层 / PSD 重建
+
+控制台支持上传真实 JPG / PNG / WEBP 图片到本机 runtime：
+
+- `POST /api/uploads/images`：multipart 上传图片，落盘到 `~/.codex/ps-automation/uploads/images`，返回真实路径、大小、mime、宽高和 sha256。
+- `POST /api/psd-rebuild/jobs`：基于上传图片或本机图片路径创建 PSD 重建作业。
+
+PSD 重建作业会优先调用当前 `vision` 路由生成 layer manifest。manifest 明确标注结果是“AI 重建层”，不是原始 PSD 图层恢复。模型失败或返回非结构化文本时，接口只生成真实单图层 fallback manifest 和 Photoshop JSX，不伪造拆层结果。
+
+如果请求体传 `executePhotoshop: true`，服务会尝试用本机 Photoshop 执行生成的 JSX，把上传图片保存成本地 `rebuilt.psd`，并按 vision 识别到的文字候选创建可编辑文本层。Photoshop 不可用或脚本失败时，作业仍保留本地 manifest / JSX / 审计记录，状态回退为人工复核，不影响既有 Photoshop + 飞书主链路。

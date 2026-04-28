@@ -11,6 +11,10 @@ const state = {
   modelRoutes: [],
   modelUsageHistory: [],
   modelOrchestration: null,
+  imageUploads: [],
+  psdRebuildJobs: [],
+  lastImageUpload: null,
+  lastPsdRebuildJob: null,
   modelRouteConfigKey: 'image',
   lastModelPreflight: null,
   lastModelProbe: null,
@@ -100,6 +104,20 @@ async function api(path, options = {}) {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.error || `HTTP ${response.status}`);
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+async function apiUpload(path, formData) {
+  const response = await fetch(path, {
+    method: 'POST',
+    body: formData,
   });
   const payload = await response.json();
   if (!response.ok || payload.ok === false) {
@@ -250,6 +268,8 @@ function renderStatus(payload) {
   state.feishuSendHistory = Array.isArray(payload.feishuSendHistory) ? payload.feishuSendHistory : [];
   state.modelRoutes = Array.isArray(payload.models) ? payload.models : [];
   state.modelUsageHistory = Array.isArray(payload.modelUsageHistory) ? payload.modelUsageHistory : [];
+  state.imageUploads = Array.isArray(payload.imageUploads) ? payload.imageUploads : [];
+  state.psdRebuildJobs = Array.isArray(payload.psdRebuildJobs) ? payload.psdRebuildJobs : [];
   const design006Tone = payload.design006.pendingLogin ? 'warn' : 'ok';
   const photoshopTone = payload.photoshop.configured ? 'ok' : 'warn';
   const feishuReady = payload.feishu.hasChatTarget || payload.feishu.hasUserTarget;
@@ -280,6 +300,7 @@ function renderStatus(payload) {
   renderFeishuTargets();
   renderFeishuReadiness();
   renderFeishuSendHistory();
+  renderPsdRebuildPanel();
   renderArtifactCenter();
   renderRegressionReport();
 }
@@ -806,6 +827,194 @@ async function runModelRoutingRegression() {
   state.modelRoutingRegression = payload.regression || null;
   setMessage('modelRouteResults', renderModelRoutingRegression(state.modelRoutingRegression), 'html');
   return state.modelRoutingRegression;
+}
+
+function imageUploadLabel(upload) {
+  if (!upload) return '未选择';
+  return [
+    upload.originalName || fileNameFromPath(upload.storedPath),
+    `${upload.width || '-'} x ${upload.height || '-'}`,
+    formatBytes(upload.sizeBytes),
+  ].filter(Boolean).join(' · ');
+}
+
+function selectedPsdRebuildUpload() {
+  const id = $('psdRebuildUploadSelect')?.value || '';
+  return (state.imageUploads || []).find((upload) => upload.id === id) || null;
+}
+
+function renderPsdRebuildPanel() {
+  const uploadSelect = $('psdRebuildUploadSelect');
+  const modelSelect = $('psdRebuildVisionModel');
+  if (!uploadSelect || !modelSelect) return;
+  const currentUploadId = uploadSelect.value;
+  const uploads = state.imageUploads || [];
+  uploadSelect.innerHTML = uploads.length
+    ? uploads.map((upload) => `<option value="${escapeHtml(upload.id)}">${escapeHtml(imageUploadLabel(upload))}</option>`).join('')
+    : '<option value="">暂无上传图片</option>';
+  if (uploads.some((upload) => upload.id === currentUploadId)) {
+    uploadSelect.value = currentUploadId;
+  } else if (state.lastImageUpload?.id && uploads.some((upload) => upload.id === state.lastImageUpload.id)) {
+    uploadSelect.value = state.lastImageUpload.id;
+  }
+  const selectedUpload = selectedPsdRebuildUpload();
+  if (selectedUpload && !$('psdRebuildImagePath').value.trim()) {
+    $('psdRebuildImagePath').value = selectedUpload.storedPath || '';
+  }
+  const currentModel = modelSelect.value;
+  modelSelect.innerHTML = modelOptionsForRouteHtml('vision', currentModel, '未配置');
+  if (currentModel && modelRouteModels('vision').includes(currentModel)) modelSelect.value = currentModel;
+  renderPsdRebuildHistory();
+}
+
+function layerManifestSummary(layerManifest) {
+  const layers = Array.isArray(layerManifest?.layers) ? layerManifest.layers : [];
+  const textCount = layers.filter((layer) => layer.type === 'text').length;
+  const typeCounts = layers.reduce((acc, layer) => {
+    const type = layer.type || 'unknown';
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {});
+  return {
+    layers,
+    textCount,
+    typeText: Object.entries(typeCounts).map(([type, count]) => `${type} ${count}`).join(' / '),
+  };
+}
+
+function renderLayerManifestPreview(layerManifest) {
+  if (!layerManifest) return '';
+  const summary = layerManifestSummary(layerManifest);
+  return `
+    <div class="psd-layer-manifest">
+      <div class="preflight-status ${layerManifest.status === 'ai_analyzed' ? 'ready' : 'blocked'}">
+        <strong>${escapeHtml(layerManifest.status === 'ai_analyzed' ? 'Vision 拆层建议已生成' : '单图层 fallback 已生成')}</strong>
+        <span>${escapeHtml(layerManifest.summary || '-')}</span>
+      </div>
+      <div class="psd-layer-list">
+        ${summary.layers.slice(0, 10).map((layer) => `
+          <div class="psd-layer-item ${escapeHtml(layer.type || 'raster')}">
+            <strong>${escapeHtml(layer.name || layer.id || '-')}</strong>
+            <span>${escapeHtml(layer.type || '-')} · confidence ${escapeHtml(layer.confidence ?? '-')}</span>
+            <small>${escapeHtml(layer.text ? `文字: ${layer.text}` : layer.role || '')}</small>
+            <small>${escapeHtml(layer.editableRecommendation || '')}</small>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderPsdRebuildJob(job, layerManifest = null, photoshop = null) {
+  if (!job) return '<div class="empty">暂无 PSD 重建作业。</div>';
+  const exported = job.status === 'psd_exported';
+  const tone = exported ? 'ready' : job.status === 'failed' ? 'blocked' : 'running';
+  const findings = (job.findings || []).map((item) => `
+    <div class="issue ${item.severity === 'warning' ? 'warn' : item.severity === 'error' ? 'err' : 'ok'}">
+      <b>${escapeHtml(item.code || 'finding')}</b>${escapeHtml(item.message || '-')}
+    </div>
+  `).join('');
+  const preview = job.previewImagePath
+    ? `<img src="${escapeHtml(localImageUrl(job.previewImagePath))}" alt="PSD 重建预览">`
+    : `<img src="${escapeHtml(localImageUrl(job.sourceImagePath))}" alt="上传图片预览">`;
+  return `
+    <div class="psd-rebuild-card">
+      <div class="psd-rebuild-preview">${preview}</div>
+      <div class="psd-rebuild-main">
+        <div class="job-status ${tone}">
+          <strong>${escapeHtml(exported ? 'PSD 已本地导出' : job.status === 'analyzed' ? '重建包已生成' : '已回退人工复核')}</strong>
+          <span>${escapeHtml(job.id || '-')}</span>
+        </div>
+        <dl class="compact-receipt">
+          <div><dt>Source</dt><dd>${escapeHtml(job.sourceImagePath || '-')}</dd></div>
+          <div><dt>尺寸 / 大小</dt><dd>${escapeHtml(`${job.sourceImage?.width || '-'} x ${job.sourceImage?.height || '-'} · ${formatBytes(job.sourceImage?.sizeBytes)}`)}</dd></div>
+          <div><dt>Layer Manifest</dt><dd>${escapeHtml(job.layerManifestPath || '-')}</dd></div>
+          <div><dt>Photoshop JSX</dt><dd>${escapeHtml(job.photoshopScriptPath || '-')}</dd></div>
+          <div><dt>PSD 输出</dt><dd>${escapeHtml(job.outputPsdExists ? job.outputPsdPath : '未导出；PSD 仍只在本地生成路径内处理')}</dd></div>
+          <div><dt>模型</dt><dd>${escapeHtml([job.model || '-', job.selectedRole || '', formatDurationMs(job.durationMs)].filter(Boolean).join(' · '))}</dd></div>
+          <div><dt>图层建议</dt><dd>${escapeHtml(`${job.layerCount || 0} layers · text ${job.textLayerCount || 0}`)}</dd></div>
+        </dl>
+        ${photoshop ? `
+          <div class="issue ${photoshop.outputPsdExists ? 'ok' : photoshop.executed ? 'warn' : 'ok'}">
+            <b>photoshop</b>${escapeHtml(photoshop.executed ? (photoshop.outputPsdExists ? '本机 Photoshop 已导出 PSD。' : photoshop.result?.error || 'Photoshop 未导出 PSD。') : '已生成本地 JSX，本次未自动执行 Photoshop。')}
+          </div>
+        ` : ''}
+        ${findings ? `<div class="issue-list">${findings}</div>` : ''}
+      </div>
+    </div>
+    ${renderLayerManifestPreview(layerManifest)}
+  `;
+}
+
+function renderPsdRebuildHistory() {
+  const el = $('psdRebuildResults');
+  if (!el) return;
+  const active = state.lastPsdRebuildJob || (state.psdRebuildJobs || [])[0] || null;
+  if (!active) {
+    el.innerHTML = '<div class="empty">上传图片后点击“开始智能拆层”，这里会显示 layer manifest 和本地 PSD 重建路径。</div>';
+    return;
+  }
+  el.innerHTML = renderPsdRebuildJob(active);
+}
+
+async function uploadPsdRebuildImage() {
+  const input = $('psdRebuildImageInput');
+  const file = input?.files?.[0];
+  if (!file) {
+    setMessage('psdRebuildUploadResults', '<div class="issue err"><b>file_missing</b>请选择真实 JPG / PNG / WEBP 图片。</div>', 'html');
+    return null;
+  }
+  const formData = new FormData();
+  formData.append('image', file);
+  const payload = await apiUpload('/api/uploads/images', formData);
+  state.lastImageUpload = payload.upload || null;
+  state.imageUploads = Array.isArray(payload.uploads) ? payload.uploads : state.imageUploads;
+  if (payload.upload?.storedPath) $('psdRebuildImagePath').value = payload.upload.storedPath;
+  renderPsdRebuildPanel();
+  setMessage('psdRebuildUploadResults', `
+    <div class="preflight-status ready">
+      <strong>图片已真实上传</strong>
+      <span>${escapeHtml(imageUploadLabel(payload.upload))}</span>
+    </div>
+    <div class="artifact-list">
+      <div><strong>文件</strong><span>${escapeHtml(payload.upload?.storedPath || '-')}</span></div>
+      <div><strong>SHA256</strong><span>${escapeHtml(payload.upload?.sha256 || '-')}</span></div>
+      <div><strong>Metadata</strong><span>${escapeHtml(payload.upload?.metadataPath || '-')}</span></div>
+    </div>
+  `, 'html');
+  return payload.upload;
+}
+
+async function startPsdRebuild() {
+  const selectedUpload = selectedPsdRebuildUpload();
+  const imagePath = $('psdRebuildImagePath')?.value?.trim() || '';
+  if (!selectedUpload && !imagePath) {
+    setMessage('psdRebuildResults', '<div class="issue err"><b>source_missing</b>请先上传图片或填写本机图片路径。</div>', 'html');
+    return null;
+  }
+  const executePhotoshop = Boolean($('psdRebuildExecutePhotoshop')?.checked);
+  $('startPsdRebuildBtn').disabled = true;
+  $('startPsdRebuildBtn').textContent = '拆层中...';
+  setMessage('psdRebuildResults', '<div class="empty">正在调用真实 Vision 模型分析图片，并生成本地重建包...</div>', 'html');
+  try {
+    const payload = await api('/api/psd-rebuild/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        uploadId: selectedUpload?.id || '',
+        imagePath: selectedUpload ? '' : imagePath,
+        modelId: $('psdRebuildVisionModel')?.value?.trim() || '',
+        executePhotoshop,
+      }),
+    });
+    state.psdRebuildJobs = Array.isArray(payload.jobs) ? payload.jobs : state.psdRebuildJobs;
+    state.lastPsdRebuildJob = payload.job || null;
+    setMessage('psdRebuildResults', renderPsdRebuildJob(payload.job, payload.layerManifest, payload.photoshop), 'html');
+    await refreshModelUsageHistory().catch(() => {});
+    return payload.job;
+  } finally {
+    $('startPsdRebuildBtn').disabled = false;
+    $('startPsdRebuildBtn').textContent = '开始智能拆层';
+  }
 }
 
 function renderCandidates(candidates) {
@@ -4004,6 +4213,31 @@ $('runRegressionBtn').addEventListener('click', async () => {
   }
 });
 
+$('uploadPsdRebuildImageBtn').addEventListener('click', async () => {
+  try {
+    $('uploadPsdRebuildImageBtn').disabled = true;
+    setMessage('psdRebuildUploadResults', '正在上传真实图片...');
+    await uploadPsdRebuildImage();
+  } catch (error) {
+    setMessage('psdRebuildUploadResults', error.payload || error.message);
+  } finally {
+    $('uploadPsdRebuildImageBtn').disabled = false;
+  }
+});
+
+$('startPsdRebuildBtn').addEventListener('click', async () => {
+  try {
+    await startPsdRebuild();
+  } catch (error) {
+    setMessage('psdRebuildResults', error.payload || error.message);
+  }
+});
+
+$('psdRebuildUploadSelect').addEventListener('change', () => {
+  const upload = selectedPsdRebuildUpload();
+  if (upload?.storedPath) $('psdRebuildImagePath').value = upload.storedPath;
+});
+
 $('checkDesign006LoginBtn').addEventListener('click', async () => {
   try {
     setMessage('designResults', '正在真实检测 design006 登录态...');
@@ -4299,6 +4533,7 @@ renderFeishuSendHistory();
 renderArtifactCenter();
 renderRegressionReport();
 renderManifestCandidateList();
+renderPsdRebuildPanel();
 $('derivePresetBtn').disabled = true;
 await refresh().catch((error) => setMessage('designResults', error.message));
 await refreshLatestFinalJob({ silent: true }).catch(() => {});

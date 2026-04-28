@@ -76,6 +76,12 @@ type VisionQaInput = {
   prompt?: string;
 };
 
+type VisionLayerAnalysisInput = {
+  imagePath: string;
+  modelId?: string;
+  prompt?: string;
+};
+
 type CodexAuthStatus = {
   checkedAt: string;
   status: 'logged_in' | 'not_logged_in' | 'missing' | 'unknown';
@@ -156,6 +162,32 @@ const DEFAULT_VISION_PROMPT = [
   '请质检这张 Photoshop 最终 PNG。',
   '请用中文返回：整体是否可投递、明显文字/图像异常、是否需要人工复核。',
   '如果无法判断，请明确说明原因。',
+].join('\n');
+const DEFAULT_LAYER_ANALYSIS_PROMPT = [
+  '你正在为 Photoshop 自动化控制台分析一张扁平 JPG/PNG/WEBP 图片。',
+  '目标是生成“AI 重建层”建议，而不是声称恢复原始 PSD 图层。',
+  '请只输出严格 JSON，不要 markdown，不要代码块。',
+  'JSON schema:',
+  '{',
+  '  "summary": "一句中文总结",',
+  '  "layers": [',
+  '    {',
+  '      "id": "layer_1",',
+  '      "name": "中文层名",',
+  '      "type": "background|subject|text|decoration|shadow|highlight|raster",',
+  '      "role": "这一层在画面中的作用",',
+  '      "confidence": 0.0,',
+  '      "text": "只有文字层填写识别到的文字",',
+  '      "bounds": { "x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0 },',
+  '      "editableRecommendation": "建议如何在 PSD 中重建或人工处理",',
+  '      "notes": "限制或风险"',
+  '    }',
+  '  ],',
+  '  "textCandidates": [{ "text": "识别文字", "confidence": 0.0 }],',
+  '  "reconstructionPlan": ["按步骤说明如何重建 PSD"],',
+  '  "limitations": ["说明哪些无法从扁平图片真实恢复"]',
+  '}',
+  'bounds 必须使用 0-1 归一化坐标；不确定时用整图范围并降低 confidence。',
 ].join('\n');
 
 function codexHome(): string {
@@ -1213,6 +1245,52 @@ export async function runVisionQualityCheck(input: VisionQaInput): Promise<Recor
       sourceKind: request.route.sourceKind,
       imagePath,
       summary,
+      nonBlocking: true,
+    },
+  };
+}
+
+export async function runVisionLayerAnalysis(input: VisionLayerAnalysisInput): Promise<Record<string, unknown>> {
+  const imagePath = path.resolve(String(input.imagePath || '').trim());
+  if (!imagePath || !fs.existsSync(imagePath) || !fs.statSync(imagePath).isFile()) {
+    throw new ModelRouteError('拆层分析图片不存在，无法调用视觉模型。', { imagePath });
+  }
+  const route = getResolvedModelRoute('vision');
+  const imageBase64 = fs.readFileSync(imagePath).toString('base64');
+  const prompt = String(input.prompt || '').trim() || DEFAULT_LAYER_ANALYSIS_PROMPT;
+  const request = await callModels(route, input.modelId, (model) => ({
+    endpoint: endpointFor(route, '/chat/completions'),
+    payload: {
+      model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${fileMime(imagePath)};base64,${imageBase64}` } },
+        ],
+      }],
+      temperature: 0.1,
+      max_tokens: 2200,
+    },
+  }));
+  const summary = textFromModelResponse(request.response);
+  if (!summary) {
+    throw new ModelRouteError('视觉模型没有返回可读拆层分析。', { model: request.model }, 502);
+  }
+  return {
+    status: 'completed',
+    analysis: {
+      checkedAt: new Date().toISOString(),
+      model: request.model,
+      selectedRole: request.selectedRole,
+      apiKeyEnv: request.apiKeyEnv,
+      usage: request.usage,
+      attempts: request.attempts,
+      provider: request.route.provider,
+      sourceKind: request.route.sourceKind,
+      imagePath,
+      prompt,
+      rawText: summary,
       nonBlocking: true,
     },
   };

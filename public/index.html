@@ -149,6 +149,43 @@
             <div id="designResults" class="message-box"></div>
           </div>
         </section>
+
+        <section class="psd-rebuild-panel">
+          <div class="section-head compact">
+            <div>
+              <h2>智能拆层 / PSD 重建</h2>
+              <p>上传扁平图片，生成 AI 重建层 manifest；这是重建层，不是原始 PSD 图层解析。</p>
+            </div>
+          </div>
+          <div class="psd-rebuild-grid">
+            <label class="field">
+              <span>上传图片</span>
+              <input id="psdRebuildImageInput" type="file" accept="image/png,image/jpeg,image/webp">
+            </label>
+            <label class="field">
+              <span>最近上传</span>
+              <select id="psdRebuildUploadSelect"></select>
+            </label>
+            <label class="field wide">
+              <span>或本机图片路径</span>
+              <input id="psdRebuildImagePath" placeholder="/path/to/source.jpg">
+            </label>
+            <label class="field">
+              <span>Vision 模型</span>
+              <select id="psdRebuildVisionModel"></select>
+            </label>
+            <label class="check-row psd-rebuild-check">
+              <input id="psdRebuildExecutePhotoshop" type="checkbox">
+              <span>同时尝试本机 Photoshop 导出 PSD</span>
+            </label>
+            <div class="button-row stretch psd-rebuild-actions">
+              <button id="uploadPsdRebuildImageBtn" type="button" class="secondary">上传图片</button>
+              <button id="startPsdRebuildBtn" type="button">开始智能拆层</button>
+            </div>
+          </div>
+          <div id="psdRebuildUploadResults" class="message-box"></div>
+          <div id="psdRebuildResults" class="psd-rebuild-results"></div>
+        </section>
       </section>
 
       <aside class="inspector">

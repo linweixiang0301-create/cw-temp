@@ -1,3 +1,69 @@
+# 2026-04-28 任务 — 智能拆层 / PSD 重建 MVP 与图片上传
+
+## 目标
+- 在 PS 自动化控制台新增“智能拆层 / PSD 重建”分区。
+- 新增真实图片上传接口，接受本机上传的 JPG / PNG / WEBP，落盘到本地 runtime，不使用 mock 数据。
+- 基于真实上传图片生成可审计的 layer manifest：优先走 vision 模型分析；失败时只返回真实单图层/人工复核路径，不伪造拆层。
+- 第一版 PSD 重建以本地可追踪资产为核心：保存原图、manifest、作业记录，并明确“AI 重建层，不是原始 PSD 图层”。
+- 不改变现有 design006 -> manifest -> slot 操作 -> Photoshop job -> final.png -> 飞书只发 PNG 主链路。
+
+## 计划
+- [x] 梳理现有上传、模型路由、Photoshop job、前端分区结构。
+- [x] 新增 `/api/uploads/images`，解析真实 multipart 上传，记录路径、大小、mime、宽高、sha256。
+- [x] 新增上传历史状态，`/api/status` 返回最近上传和 PSD 重建作业。
+- [x] 新增 `/api/psd-rebuild/jobs`，对上传图片做 vision layer analysis 并生成本地 manifest / 作业记录。
+- [x] UI 新增“智能拆层 / PSD 重建”分区：上传、作业执行、manifest 预览、结果路径。
+- [x] 更新 README / 回顾，运行类型检查、前端语法检查、API 真实上传验证和密钥扫描。
+
+## 验证计划
+- `npm run check`
+- `node --check public/app.js`
+- `git diff --check`
+- 用真实本地 PNG 调用 `/api/uploads/images`，确认落盘文件存在、sha256/大小/宽高正确。
+- 用上传结果调用 `/api/psd-rebuild/jobs`，确认输出真实作业记录；vision 失败时返回 non-blocking fallback，不生成假拆层。
+- 检查 `/api/status` 能返回最近上传与重建历史。
+- 扫描仓库与 API 响应，确认没有写入 token/cookie/key 明文。
+
+## 回顾
+- 新增真实上传服务：
+  - `POST /api/uploads/images` 接受 multipart `jpg/png/webp`，落盘到 `~/.codex/ps-automation/uploads/images/YYYY-MM-DD`。
+  - 返回并记录真实 `storedPath`、`metadataPath`、`mime`、`extension`、`sizeBytes`、`sha256`、`width`、`height`。
+  - `GET /api/uploads/images` 和 `/api/status` 返回最近上传记录。
+- 新增智能拆层 / PSD 重建作业：
+  - `POST /api/psd-rebuild/jobs` 支持 `uploadId` 或本机 `imagePath`。
+  - 优先调用当前 `vision` 路由执行 layer analysis。
+  - 生成本地 `layer-manifest.json`、`rebuild.jsx`、预期 `rebuilt.psd` 路径和作业审计。
+  - manifest 明确标注 `originalPsdRecovery=false`：这是 AI 重建层，不是原始 PSD 图层恢复。
+  - `executePhotoshop=true` 时才尝试本机 Photoshop 导出 PSD；默认验证路径不会自动执行 Photoshop。
+- UI：
+  - 主工作区新增“智能拆层 / PSD 重建”分区。
+  - 支持图片上传、最近上传选择、本机图片路径、Vision 模型选择、是否尝试 Photoshop 导出 PSD。
+  - 结果区展示上传回执、layer manifest 预览、Photoshop JSX、本地 PSD 路径和 fallback findings。
+- 真实验证：
+  - 服务已重启到最新代码：`http://127.0.0.1:3498`，PID `3098`。
+  - 用真实本机 PNG 上传成功：
+    - upload id：`6165414e-3c52-4475-9434-91c006b9e0b3`
+    - 大小：`133 B`
+    - 尺寸：`64 x 64`
+    - sha256：`298d73828554e89212cfe178f17dffd7ac9598ca69288a7bada965f4b4e2c69f`
+  - 用该上传创建 PSD 重建作业：
+    - job id：`73d111b5-93b4-463a-89b1-1ca2641f2fa0`
+    - status：`fallback`
+    - manifest：`/Users/a1234/.codex/ps-automation/psd-rebuild/73d111b5-93b4-463a-89b1-1ca2641f2fa0/layer-manifest.json`
+    - Photoshop JSX：`/Users/a1234/.codex/ps-automation/psd-rebuild/73d111b5-93b4-463a-89b1-1ca2641f2fa0/rebuild.jsx`
+    - `originalPsdRecovery=false`，`layerCount=1`，未伪造拆层。
+  - Vision route live probe 仍为 ready；真实 layer analysis 调用中，主模型 `gemini-3-flash-preview` 和备选 `gpt-5.5` 均返回 HTTP 400，因此按设计写入 `single_raster_manifest` fallback 和模型使用审计。
+  - `/api/status` 返回上传记录 `1` 条、PSD 重建记录 `2` 条，响应未包含 token/key 明文。
+- 验证通过：
+  - `npm run check`
+  - `node --check public/app.js`
+  - `git diff --check`
+  - `/api/uploads/images`
+  - `/api/psd-rebuild/jobs`
+  - `/api/status`
+  - `/api/model-routes/live-probe`
+  - `git grep` 扫描 tracked files 未发现 `sk-...` 明文。
+
 # 2026-04-28 任务 — 模型三路协作关系分析与 UI 优化
 
 ## 目标

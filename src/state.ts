@@ -152,7 +152,7 @@ export type ModelRouteRecord = {
 export type ModelUsageRecord = {
   id: string;
   createdAt: string;
-  operation: 'image.generate' | 'vision.qa';
+  operation: 'image.generate' | 'vision.qa' | 'vision.layer_analysis';
   routeKey: ModelRouteKey;
   status: 'generated' | 'completed' | 'fallback' | 'failed';
   model?: string | null;
@@ -196,6 +196,55 @@ export type ModelUsageRecord = {
   nonBlocking: boolean;
 };
 
+export type ImageUploadRecord = {
+  id: string;
+  createdAt: string;
+  originalName: string;
+  storedPath: string;
+  metadataPath: string;
+  mime: string;
+  extension: string;
+  sizeBytes: number;
+  sha256: string;
+  width: number;
+  height: number;
+  label?: string | null;
+};
+
+export type PsdRebuildJobRecord = {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'psd_exported' | 'analyzed' | 'fallback' | 'failed';
+  uploadId?: string | null;
+  sourceImagePath: string;
+  sourceImage: {
+    width: number;
+    height: number;
+    mime: string;
+    sizeBytes: number;
+    sha256?: string | null;
+  };
+  layerManifestPath: string;
+  photoshopScriptPath?: string | null;
+  outputPsdPath?: string | null;
+  outputPsdExists?: boolean;
+  previewImagePath?: string | null;
+  layerCount: number;
+  textLayerCount: number;
+  model?: string | null;
+  selectedRole?: string | null;
+  apiKeyEnv?: string | null;
+  durationMs?: number | null;
+  fallback?: {
+    mode?: string | null;
+    reason?: string | null;
+    nonBlocking?: boolean;
+  } | null;
+  findings: Array<{ code?: string; message?: string; severity?: string }>;
+  psdDelivery: 'local_only';
+};
+
 type StateShape = {
   downloads: DownloadRecord[];
   jobs: ConsoleJobRecord[];
@@ -205,6 +254,8 @@ type StateShape = {
   feishuSendHistory: FeishuSendRecord[];
   modelRoutes: ModelRouteRecord[];
   modelUsageHistory: ModelUsageRecord[];
+  imageUploads: ImageUploadRecord[];
+  psdRebuildJobs: PsdRebuildJobRecord[];
 };
 
 const STATE_PATH = runtimePath('console-state.json');
@@ -219,6 +270,8 @@ function emptyState(): StateShape {
     feishuSendHistory: [],
     modelRoutes: [],
     modelUsageHistory: [],
+    imageUploads: [],
+    psdRebuildJobs: [],
   };
 }
 
@@ -232,6 +285,8 @@ function normalizeState(raw: Partial<StateShape> | null | undefined): StateShape
     feishuSendHistory: Array.isArray(raw?.feishuSendHistory) ? raw.feishuSendHistory : [],
     modelRoutes: Array.isArray(raw?.modelRoutes) ? raw.modelRoutes : [],
     modelUsageHistory: Array.isArray(raw?.modelUsageHistory) ? raw.modelUsageHistory : [],
+    imageUploads: Array.isArray(raw?.imageUploads) ? raw.imageUploads : [],
+    psdRebuildJobs: Array.isArray(raw?.psdRebuildJobs) ? raw.psdRebuildJobs : [],
   };
 }
 
@@ -580,6 +635,80 @@ export function addModelUsageRecord(input: Omit<ModelUsageRecord, 'id' | 'create
     nonBlocking: input.nonBlocking !== false,
   };
   state.modelUsageHistory = [record, ...state.modelUsageHistory].slice(0, 100);
+  writeState(state);
+  return record;
+}
+
+export function listImageUploads(): ImageUploadRecord[] {
+  return readState().imageUploads.slice(0, 50);
+}
+
+export function getImageUpload(id: string): ImageUploadRecord | null {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return null;
+  return readState().imageUploads.find((record) => record.id === normalizedId) || null;
+}
+
+export function addImageUpload(input: Omit<ImageUploadRecord, 'id' | 'createdAt'> & {
+  id?: string;
+  createdAt?: string;
+}): ImageUploadRecord {
+  const state = readState();
+  const record: ImageUploadRecord = {
+    id: input.id || crypto.randomUUID(),
+    createdAt: input.createdAt || new Date().toISOString(),
+    originalName: input.originalName,
+    storedPath: input.storedPath,
+    metadataPath: input.metadataPath,
+    mime: input.mime,
+    extension: input.extension,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256,
+    width: input.width,
+    height: input.height,
+    label: input.label || null,
+  };
+  state.imageUploads = [record, ...state.imageUploads.filter((item) => item.id !== record.id)].slice(0, 100);
+  writeState(state);
+  return record;
+}
+
+export function listPsdRebuildJobs(): PsdRebuildJobRecord[] {
+  return readState().psdRebuildJobs.slice(0, 50);
+}
+
+export function addPsdRebuildJob(input: Omit<PsdRebuildJobRecord, 'id' | 'createdAt' | 'updatedAt' | 'psdDelivery'> & {
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  psdDelivery?: 'local_only';
+}): PsdRebuildJobRecord {
+  const state = readState();
+  const now = new Date().toISOString();
+  const record: PsdRebuildJobRecord = {
+    id: input.id || crypto.randomUUID(),
+    createdAt: input.createdAt || now,
+    updatedAt: input.updatedAt || now,
+    status: input.status,
+    uploadId: input.uploadId || null,
+    sourceImagePath: input.sourceImagePath,
+    sourceImage: input.sourceImage,
+    layerManifestPath: input.layerManifestPath,
+    photoshopScriptPath: input.photoshopScriptPath || null,
+    outputPsdPath: input.outputPsdPath || null,
+    outputPsdExists: Boolean(input.outputPsdExists),
+    previewImagePath: input.previewImagePath || null,
+    layerCount: input.layerCount,
+    textLayerCount: input.textLayerCount,
+    model: input.model || null,
+    selectedRole: input.selectedRole || null,
+    apiKeyEnv: input.apiKeyEnv || null,
+    durationMs: input.durationMs ?? null,
+    fallback: input.fallback || null,
+    findings: Array.isArray(input.findings) ? input.findings : [],
+    psdDelivery: 'local_only',
+  };
+  state.psdRebuildJobs = [record, ...state.psdRebuildJobs.filter((item) => item.id !== record.id)].slice(0, 100);
   writeState(state);
   return record;
 }
